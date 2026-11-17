@@ -7,7 +7,7 @@ const report: SyncReport = {
   skippedBySupplierFilter: [
     {
       supplier: 'SECRET SUPPLIER',
-      reason: 'SUPPLIER_NOT_SELECTED',
+      reason: 'PRODUCT_NOT_SELECTED',
       count: 3,
       hasInvisibleCharacters: false,
     },

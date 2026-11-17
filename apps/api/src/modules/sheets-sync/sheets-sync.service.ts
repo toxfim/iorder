@@ -20,8 +20,8 @@ import { DeliveryCostSource } from './delivery-cost-source.js';
 import { collectSheetRates, withDerivedUsdCost } from './derived-usd-cost.js';
 import { readRequiredColumns, SHEET_COLUMNS, type SheetRecord } from './sheet-columns.js';
 import { SheetSyncRunRepository, type SheetSyncRunRecord } from './sheet-sync-run.repository.js';
+import { SheetRowSelection } from './product-code-selection.js';
 import { capStoredSupplier, normalizeSheetText } from './sheet-values.js';
-import { findSupplierRule } from './supplier-filter.js';
 import { describeErrorSafely, safeErrorCode, toSyncError } from './sync-error.js';
 
 export interface RejectedRow {
@@ -86,7 +86,8 @@ export interface SyncReport {
 export interface SkippedSupplier {
   /** Whitespace-collapsed; case differences are merged under the first spelling seen. */
   supplier: string;
-  reason: 'SUPPLIER_NOT_SELECTED';
+  /** Why the rows were skipped: their «Товар_ID» is not in the selection (product-code-selection.ts). */
+  reason: 'PRODUCT_NOT_SELECTED';
   count: number;
   /** True when the value contains zero-width/format characters that are invisible when printed. */
   hasInvisibleCharacters: boolean;
@@ -150,6 +151,7 @@ export class SheetsSyncService {
     private readonly clock: Clock,
     private readonly removals: SupplyRemovalService,
     private readonly runs: SheetSyncRunRepository,
+    private readonly selection: SheetRowSelection,
   ) {}
 
   async syncCostReference(trigger: SheetSyncTrigger = 'MANUAL'): Promise<SyncReport> {
@@ -193,8 +195,8 @@ export class SheetsSyncService {
   }
 
   /**
-   * Supplier filter first (rows of other suppliers are skipped without being validated, so their
-   * broken cells cause no noise), then zod validation row by row: one bad row is reported, not
+   * Product-code selection first (rows of other products are skipped without being validated, so
+   * their broken cells cause no noise; skipped rows are still counted per supplier), then zod validation row by row: one bad row is reported, not
    * fatal. A row with a UZS cost but no USD cost and no rate gets them derived before validation.
    */
   private selectAndValidate(
@@ -210,7 +212,7 @@ export class SheetsSyncService {
       const key = supplier.toLowerCase();
       const entry = skipped.get(key) ?? {
         supplier,
-        reason: 'SUPPLIER_NOT_SELECTED',
+        reason: 'PRODUCT_NOT_SELECTED',
         count: 0,
         hasInvisibleCharacters: /[\u200b-\u200f\u2060\ufeff]/.test(supplier),
       };
@@ -227,9 +229,8 @@ export class SheetsSyncService {
     const mentioned = new Set<string>();
     const valid: ValidRow[] = [];
     records.forEach((record, index) => {
-      const rawSupplier = record[SHEET_COLUMNS.supplier];
-      if (findSupplierRule(rawSupplier) === null) {
-        skip(rawSupplier);
+      if (!this.selection.isSelected(record[SHEET_COLUMNS.productCode])) {
+        skip(record[SHEET_COLUMNS.supplier]);
         return;
       }
       const effective = withDerivedUsdCost(record, sheetRates);

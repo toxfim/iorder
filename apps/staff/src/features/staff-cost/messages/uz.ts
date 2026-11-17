@@ -213,6 +213,7 @@ export const staffCostUz = {
       UNKNOWN: "Noma'lum sabab",
     },
     skipReason: {
+      PRODUCT_NOT_SELECTED: "tovar ro'yxatda yo'q",
       SUPPLIER_NOT_SELECTED: 'tanlanmagan yetkazib beruvchi',
       BEFORE_DATE_LIMIT: 'sana chegarasidan oldin',
     },

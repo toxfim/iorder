@@ -209,6 +209,7 @@ export const staffCostRu: StaffCostMessages = {
       UNKNOWN: 'Другая причина',
     },
     skipReason: {
+      PRODUCT_NOT_SELECTED: 'товара нет в списке',
       SUPPLIER_NOT_SELECTED: 'поставщик не выбран',
       BEFORE_DATE_LIMIT: 'раньше границы по дате',
     },

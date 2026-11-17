@@ -12,6 +12,7 @@ import {
 } from '../src/modules/pricing/index.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   FIXTURE_LINES,
   fixtureLine,
   fixtureTable,
@@ -76,6 +77,7 @@ describe('persisted sheet sync runs (real PostgreSQL)', () => {
       t.clock,
       t.get(SupplyRemovalService),
       t.get(SheetSyncRunRepository),
+      new FixtureRowSelection(),
     );
   const sync = (lines: readonly FixtureLine[]) =>
     serviceFor(new FakeDeliveryCostSource(fixtureTable(lines))).syncCostReference();
@@ -86,12 +88,12 @@ describe('persisted sheet sync runs (real PostgreSQL)', () => {
     return sheetSyncRunSchema.parse(response.body);
   };
 
-  describe('a skipped supplier with a very long name', () => {
+  describe('a skipped row whose supplier has a very long name', () => {
     it('is stored capped at 200 characters with an ellipsis marker', async () => {
       const long = `${'Long supplier '.repeat(40)}end`;
       await sync([
         fixtureLine('10482', 'R-OK', '10.10.2026'),
-        fixtureLine('10931', 'R-LONG', '10.10.2026', { supplier: long }),
+        fixtureLine('20001', 'R-LONG', '10.10.2026', { supplier: long }),
       ]);
       const stored = (await lastRun()).skippedSuppliers.map((s) => s.supplier);
       expect(stored).toHaveLength(1);

@@ -69,7 +69,7 @@ const decimalWithFraction = (digits: number) =>
   z.string().regex(new RegExp(`^\\d+\\.\\d{${digits}}$`));
 
 /**
- * One delivery line (the staff-only table holds ALL delivery lines of the selected suppliers).
+ * One delivery line (the staff-only table holds ALL delivery lines of the selected products).
  * Quantities have 3 fraction digits, USD cost and rate 4, UZS cost 2. Supplier, purchase method
  * and category are staff-only too (supplier and purchase method are cost-class data).
  */
