@@ -39,6 +39,7 @@ import {
 import { UsdRateService } from '../src/modules/pricing/usd-rate/usd-rate.service.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   fixtureLine,
   fixtureTable,
   type FixtureLine,
@@ -1173,6 +1174,7 @@ describe('staff-added products without a sheet code (real PostgreSQL)', () => {
         t.clock,
         t.get(SupplyRemovalService),
         t.get(SheetSyncRunRepository),
+        new FixtureRowSelection(),
       ).syncCostReference();
 
     it('the sheet sync reports an IO- «Товар_ID» as a row error and creates no product for it', async () => {

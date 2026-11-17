@@ -19,6 +19,7 @@ import {
 } from '../src/modules/pricing/index.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   fixtureLine,
   fixtureTable,
   type FixtureLine,
@@ -87,6 +88,7 @@ describe('products created from the sheet, unpriced and stock lists (real Postgr
       t.clock,
       t.get(SupplyRemovalService),
       t.get(SheetSyncRunRepository),
+      new FixtureRowSelection(),
     ).syncCostReference();
 
   const productByCode = (productCode: string) =>

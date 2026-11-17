@@ -59,7 +59,9 @@ export type SheetSyncRejectedRow = z.infer<typeof sheetSyncRejectedRowSchema>;
 
 export const sheetSyncSkippedSupplierSchema = z.strictObject({
   supplier: z.string(),
-  reason: z.enum(['SUPPLIER_NOT_SELECTED', 'BEFORE_DATE_LIMIT']),
+  // PRODUCT_NOT_SELECTED since 2026-11-17 (rows chosen by «Товар_ID»); the other two stay for the
+  // runs stored before it.
+  reason: z.enum(['PRODUCT_NOT_SELECTED', 'SUPPLIER_NOT_SELECTED', 'BEFORE_DATE_LIMIT']),
   count,
   hasInvisibleCharacters: z.boolean(),
 });

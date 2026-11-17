@@ -213,6 +213,7 @@ export const staffCostEn: StaffCostMessages = {
       UNKNOWN: 'Other reason',
     },
     skipReason: {
+      PRODUCT_NOT_SELECTED: 'product not in the list',
       SUPPLIER_NOT_SELECTED: 'supplier not selected',
       BEFORE_DATE_LIMIT: 'before the date limit',
     },

@@ -1,6 +1,9 @@
+import { productCodeKey } from '@iorder/shared';
 import { Prisma } from '../../generated/prisma/client.js';
 import { DeliveryCostSource, type SheetTable } from './delivery-cost-source.js';
+import { SheetRowSelection } from './product-code-selection.js';
 import { SHEET_COLUMNS, type SheetField } from './sheet-columns.js';
+import { normalizeSheetText } from './sheet-values.js';
 
 /** In-memory source for tests and local development. It can only be read, like the real one. */
 export class FakeDeliveryCostSource extends DeliveryCostSource {
@@ -131,8 +134,9 @@ export function fixtureTable(
  * Product 10482 has three deliveries (product ids in the real sheet are 5-digit numbers; one cell is
  * padded with spaces, as a sheet might). All lines are internally consistent (costUzs = costUsd x
  * rate) EXCEPT 10931 / REQ-021, which is deliberately inconsistent (a wrong UZS figure typed in the
- * sheet) to exercise the mismatch report. 99999 is deliberately unknown to the catalog. 20001
- * belongs to a supplier we do not read, and the last line to the real near-miss supplier name.
+ * sheet) to exercise the mismatch report. 99999 is deliberately unknown to the catalog. 20001 and
+ * 20002 are products we do not read (FIXTURE_UNSELECTED_CODES); 20002 has the real near-miss
+ * supplier name.
  */
 export const FIXTURE_LINES: readonly FixtureLine[] = [
   fixtureLine('10482', 'REQ-001', '01.08.2026', { availableQuantity: '0' }),
@@ -142,11 +146,32 @@ export const FIXTURE_LINES: readonly FixtureLine[] = [
   fixtureLine('10931', 'REQ-021', '01.10.2026', { costUzs: '999999' }),
   fixtureLine('99999', 'REQ-099', '05.10.2026', { productName: 'Неизвестный товар' }),
   fixtureLine('20001', 'REQ-500', '05.10.2026', { supplier: 'Some Other Supplier' }),
-  // A real near-miss: NOT a selected supplier, so it lands in the skipped list.
+  // Not a selected product (and a real near-miss supplier name), so it lands in the skipped list.
   fixtureLine('20002', 'REQ-501', '05.10.2026', {
     supplier: 'Склад Север BM Восток F114 ECO sistem',
   }),
 ];
+
+/** Product codes of the fixture whose rows are NOT read (20001 and 20002 of FIXTURE_LINES). */
+export const FIXTURE_UNSELECTED_CODES: readonly string[] = ['20001', '20002'];
+
+/**
+ * The row selection tests use: every product code except FIXTURE_UNSELECTED_CODES (and the codes a
+ * test adds), so fixtures do not have to list the codes they read.
+ */
+export class FixtureRowSelection extends SheetRowSelection {
+  private readonly unselected: ReadonlySet<string>;
+
+  constructor(unselected: readonly string[] = FIXTURE_UNSELECTED_CODES) {
+    super();
+    this.unselected = new Set(unselected.map(productCodeKey));
+  }
+
+  isSelected(rawProductCode: unknown): boolean {
+    const code = normalizeSheetText(rawProductCode);
+    return code === null || !this.unselected.has(productCodeKey(code));
+  }
+}
 
 /** Real-shaped extras, used by dedicated tests: one request containing many products. */
 export const MANY_PRODUCTS_REQUEST: readonly FixtureLine[] = Array.from({ length: 6 }, (_, i) =>
