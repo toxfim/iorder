@@ -1,0 +1,51 @@
+/// STAFF-ONLY cost data (hard rule 7, data-model §6.2). One row PER DELIVERY LINE: the table holds
+/// ALL delivery lines of the selected suppliers (the name price_reference is historical).
+///
+/// PRODUCTION GRANTS: once the two-role split exists (migrator vs application), the application
+/// role needs only SELECT, INSERT and UPDATE on this table. No DELETE, no TRUNCATE (rows are
+/// never deleted by staff; a vanished sheet line needs the owner's confirmation first). Never selected by
+/// any customer-facing query or DTO; the schema-level cost scan allow-lists THIS FILE by name.
+///
+/// Precisions (all fixed-point, never float):
+/// - quantities Decimal(18,3): quantities may be fractional by unit (data-model invariant 1);
+///   three digits cover kg-style units; 15 integer digits are far above any delivery.
+/// - cost_usd Decimal(18,4): a unit cost in dollars can be sub-cent (bulk goods), 4 digits.
+/// - usd_rate_used Decimal(18,4): UZS per 1 USD, quoted like 12650.5000.
+/// - cost_uzs Decimal(18,2): money, same precision as price_list_items.base_price.
+///
+/// COST PENDING (migration cost_pending_lines, 2026-11-06): a fresh delivery is written into the
+/// sheet with its quantities first; the purchase price, the rate and the UZS cost come later. Such
+/// a line is stored with all three cost columns NULL so its stock counts at once; the sync fills
+/// them in when the cells are typed. A CHECK keeps the three together: all set or all null.
+model PriceReference {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  productId         String    @map("product_id") @db.Uuid
+  /// The sheet's delivery / request id, kept as text exactly as the sheet writes it.
+  deliveryRef       String    @map("delivery_ref")
+  /// Staff-only, cost-class data (who we bought from and how). Text exactly as the sheet writes it
+  /// (whitespace collapsed); never in any customer DTO.
+  supplier          String
+  purchaseMethod    String    @map("purchase_method")
+  category          String
+  deliveredQuantity Decimal   @map("delivered_quantity") @db.Decimal(18, 3)
+  availableQuantity Decimal   @map("available_quantity") @db.Decimal(18, 3)
+  /// Null (all three together) while the sheet's cost cells of this line are still empty.
+  costUsd           Decimal?  @map("cost_usd") @db.Decimal(18, 4)
+  usdRateUsed       Decimal?  @map("usd_rate_used") @db.Decimal(18, 4)
+  costUzs           Decimal?  @map("cost_uzs") @db.Decimal(18, 2)
+  deliveredAt       DateTime  @map("delivered_at") @db.Timestamptz(3)
+  /// Last time the stored values were written by a sync (unchanged rows are not rewritten).
+  syncedAt          DateTime  @map("synced_at") @db.Timestamptz(3)
+  /// Soft removal, confirmed by a manager after the sync saw the line vanish from the sheet. A removed
+  /// line stays in the table and in the audit log but is excluded from stock, latest/recent cost
+  /// queries and the default cost history. Both columns are set together or not at all.
+  removedAt         DateTime? @map("removed_at") @db.Timestamptz(3)
+  removedBy         String?   @map("removed_by")
+
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  allocations OrderAllocation[]
+
+  @@unique([productId, deliveryRef])
+  @@index([productId, deliveredAt])
+  @@map("price_reference")
+}

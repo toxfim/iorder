@@ -1,0 +1,17 @@
+/// Append-only (a database trigger rejects UPDATE, DELETE and TRUNCATE). Written only through
+/// the audit module, in the same transaction as the change it describes.
+model AuditLog {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  /// NULL = a system action (for example the sheet sync), never a fake user. No foreign key yet:
+  /// the users table does not exist.
+  actorUserId String?  @map("actor_user_id")
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  action      String
+  diff        Json
+  /// Set from the application Clock, not the database, so tests control it.
+  createdAt   DateTime @map("created_at") @db.Timestamptz(3)
+
+  @@index([entityType, entityId, createdAt])
+  @@map("audit_log")
+}

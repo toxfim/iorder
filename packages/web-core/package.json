@@ -1,0 +1,24 @@
+{
+  "name": "@iorder/web-core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Frontend code the customer app and the staff app share: UI kit, design tokens, i18n setup, http client, Telegram helpers. Consumed as source through the @core alias, never built on its own.",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@iorder/shared": "workspace:*",
+    "vue": "^3.5.44",
+    "vue-i18n": "^11.4.16",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "jsdom": "^30.1.3",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.13"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "noEmit": true,
+    "jsx": "preserve",
+    "verbatimModuleSyntax": true,
+    "paths": { "@core/*": ["./src/*"] }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "vitest.config.ts", "env.d.ts"]
+}

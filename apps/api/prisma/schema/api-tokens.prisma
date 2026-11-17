@@ -1,0 +1,23 @@
+/// An API token for a program (for example the bulk product photo upload), issued by the owner with
+/// the `api:token-issue` CLI. It acts as `user` (a staff member) but only for the actions listed in
+/// `scopes`, and only while that person still holds a role that grants them. Only the SHA-256 of
+/// the token is stored. Rows are never deleted; the application may update only last_used_at and
+/// revoked_at, and a trigger keeps a revoked token revoked.
+model ApiToken {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  /// A label for people ("codex-photos"); not a secret.
+  name       String
+  /// Hex SHA-256 of the token.
+  tokenHash  String    @unique @map("token_hash")
+  /// PermissionAction values (common/auth/permission-matrix.ts).
+  scopes     String[]
+  createdAt  DateTime  @map("created_at") @db.Timestamptz(3)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@map("api_tokens")
+}

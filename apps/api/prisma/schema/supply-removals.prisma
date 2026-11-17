@@ -1,0 +1,31 @@
+enum SupplyRemovalStatus {
+  PENDING
+  CONFIRMED
+  DISMISSED
+
+  @@map("supply_removal_status")
+}
+
+/// STAFF-ONLY. A delivery line that is stored but no longer in the sheet read: the sync opens a
+/// PENDING request and changes NOTHING else. While PENDING the line keeps counting for stock and
+/// cost history (conservative default; whether it should be excluded meanwhile is an open
+/// product detail). A manager CONFIRMS (the line is soft-removed) or DISMISSES. A request is
+/// auto-DISMISSED by the sync when the line reappears. At most one PENDING request per
+/// (product, delivery_ref): a partial unique index in the migration.
+///
+/// PRODUCTION GRANTS: SELECT, INSERT and UPDATE only. No DELETE, no TRUNCATE.
+model SupplyRemovalRequest {
+  id          String              @id @default(uuid(7)) @db.Uuid
+  productId   String              @map("product_id") @db.Uuid
+  deliveryRef String              @map("delivery_ref")
+  status      SupplyRemovalStatus @default(PENDING)
+  detectedAt  DateTime            @map("detected_at") @db.Timestamptz(3)
+  /// The manager/admin who decided; null while PENDING and for an automatic dismissal.
+  decidedBy   String?             @map("decided_by")
+  decidedAt   DateTime?           @map("decided_at") @db.Timestamptz(3)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([status, detectedAt])
+  @@map("supply_removal_requests")
+}

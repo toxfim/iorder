@@ -1,0 +1,33 @@
+/// A payment of an organization, recorded by the manager ([C] 2026-10-26). It belongs to the
+/// organization, never to an order: the debt is the total of the RECEIVED orders minus the payments
+/// that are not voided, and the orders' payment_status follows from it (oldest received first).
+/// Only the admin corrects (amount, currency, rate, day, comment) or voids one; every change is an
+/// audit row with before/after. Never deleted (trigger, grants).
+model OrganizationPayment {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  /// In `currency`, as the manager entered it.
+  amount         Decimal   @db.Decimal(18, 2)
+  /// 'USD' or 'UZS' (CHECK in the migration), chosen per payment.
+  currency       String
+  /// STAFF-ONLY. UZS per 1 USD of a so'm payment, required there; null on a USD payment (CHECK).
+  rate           Decimal?  @db.Decimal(18, 4)
+  /// STAFF-ONLY. What the payment counts for in the debt: the amount, or round(amount / rate, 6).
+  amountUsd      Decimal   @map("amount_usd") @db.Decimal(18, 6)
+  /// The day the money was paid, Asia/Tashkent; may be in the past, never in the future.
+  paidOn         DateTime  @map("paid_on") @db.Date
+  comment        String?
+  recordedBy     String    @map("recorded_by") @db.Uuid
+  recordedAt     DateTime  @map("recorded_at") @db.Timestamptz(3)
+  voidedAt       DateTime? @map("voided_at") @db.Timestamptz(3)
+  voidedBy       String?   @map("voided_by") @db.Uuid
+  voidReason     String?   @map("void_reason")
+  updatedAt      DateTime  @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  recorder     User         @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
+  voider       User?        @relation("PaymentVoidedBy", fields: [voidedBy], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, recordedAt])
+  @@map("organization_payments")
+}

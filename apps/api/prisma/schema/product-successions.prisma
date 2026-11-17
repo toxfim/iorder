@@ -1,0 +1,35 @@
+enum ProductSuccessionStatus {
+  PROPOSED
+  CONFIRMED
+  REJECTED
+
+  @@map("product_succession_status")
+}
+
+/// STAFF-DECIDED "newer model" pairs [C, owner 2026-11-09]: an older product and the newer product
+/// of the same line. The generator ("find proposals" in the staff app) INSERTS PROPOSED rows from
+/// product names and brands and never touches an existing row; a manager or admin CONFIRMS or
+/// REJECTS. A customer who bought the older product is shown the newer one ONLY from a CONFIRMED
+/// pair. One row per (older, newer); a trigger in the migration keeps the pair itself fixed and
+/// never lets a decided row go back to PROPOSED. Decisions are also written to audit_log.
+///
+/// PRODUCTION GRANTS: SELECT, INSERT and UPDATE only. No DELETE, no TRUNCATE.
+model ProductSuccession {
+  id             String                  @id @default(uuid(7)) @db.Uuid
+  olderProductId String                  @map("older_product_id") @db.Uuid
+  newerProductId String                  @map("newer_product_id") @db.Uuid
+  status         ProductSuccessionStatus @default(PROPOSED)
+  /// Set by the service from the application Clock.
+  proposedAt     DateTime                @map("proposed_at") @db.Timestamptz(3)
+  /// The manager/admin who decided last; null while PROPOSED.
+  decidedBy      String?                 @map("decided_by") @db.Uuid
+  decidedAt      DateTime?               @map("decided_at") @db.Timestamptz(3)
+
+  older Product @relation("SuccessionOlder", fields: [olderProductId], references: [id], onDelete: Restrict)
+  newer Product @relation("SuccessionNewer", fields: [newerProductId], references: [id], onDelete: Restrict)
+
+  @@unique([olderProductId, newerProductId])
+  @@index([status, proposedAt])
+  @@index([newerProductId])
+  @@map("product_successions")
+}

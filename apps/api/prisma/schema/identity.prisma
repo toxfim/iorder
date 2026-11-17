@@ -1,0 +1,73 @@
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+
+  @@map("user_status")
+}
+
+enum StaffRole {
+  ADMIN
+  MANAGER
+  ACCOUNTANT
+  WAREHOUSE_MANAGER
+  DRIVER
+  PURCHASING_MANAGER
+
+  @@map("staff_role")
+}
+
+/// A person, identified by Telegram. Staff and customers are both users (data-model decision 2).
+/// The Telegram id is a bigint: the application keeps it as a string, never a JS number.
+model User {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  telegramUserId BigInt?    @unique @map("telegram_user_id")
+  fullName       String     @map("full_name")
+  /// Staff-only data: appears in staff responses, never in a customer response.
+  phone          String?
+  language       Language   @default(UZ)
+  status         UserStatus @default(ACTIVE)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Set by the service from the application Clock (no @updatedAt: Prisma would use its own clock).
+  updatedAt      DateTime   @default(now()) @map("updated_at") @db.Timestamptz(3)
+  /// Last time the person started the bot in a private chat: from then on it may write to them.
+  botStartedAt   DateTime?  @map("bot_started_at") @db.Timestamptz(3)
+  /// Last time Telegram refused a private message (blocked or never started). The bot reaches
+  /// the person while bot_started_at is set and later than this.
+  botBlockedAt   DateTime?  @map("bot_blocked_at") @db.Timestamptz(3)
+
+  roles                   UserRole[]
+  memberships             OrganizationMember[]
+  carts                   Cart[]
+  placedOrders            Order[]                     @relation("OrderPlacedBy")
+  driverOrders            Order[]                     @relation("OrderDriver")
+  reviewedOrders          Order[]                     @relation("OrderAccountingReviewer")
+  goodsReturnedOrders     Order[]                     @relation("OrderGoodsReturnedBy")
+  orderEvents             OrderEvent[]
+  notifications           NotificationOutbox[]
+  credential              StaffCredential?
+  staffSessions           StaffSession[]
+  telegramLinkTokens      TelegramLinkToken[]
+  staffHandoffCodes       StaffHandoffCode[]
+  recordedUnitCodes       UnitCode[]                  @relation("UnitCodeRecordedBy")
+  voidedUnitCodes         UnitCode[]                  @relation("UnitCodeVoidedBy")
+  createdOrderAllocations OrderAllocation[]           @relation("OrderAllocationCreatedBy")
+  voidedOrderAllocations  OrderAllocation[]           @relation("OrderAllocationVoidedBy")
+  goodsDiscoveryAcks      CustomerGoodsDiscoveryAck[]
+  recordedPayments        OrganizationPayment[]       @relation("PaymentRecordedBy")
+  voidedPayments          OrganizationPayment[]       @relation("PaymentVoidedBy")
+  archivedOrganizations   Organization[]              @relation("OrganizationArchivedBy")
+  apiTokens               ApiToken[]
+
+  @@map("users")
+}
+
+/// Staff side. A user holding any role here never has an organization membership (database
+/// triggers in both directions, migration identity_organizations).
+model UserRole {
+  userId String    @map("user_id") @db.Uuid
+  role   StaffRole
+  user   User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([userId, role])
+  @@map("user_roles")
+}

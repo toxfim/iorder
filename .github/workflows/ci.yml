@@ -1,0 +1,160 @@
+name: CI
+
+# Branches: `dev` is the integration branch and deploys to STAGING on every green push; `master`
+# is the release branch for PRODUCTION (merge dev into master to release). Production has no
+# environment on the server yet, so its job stays skipped until the repository variable
+# PROD_DEPLOY_ENABLED is set to "true" (and PROD_SSH_HOST/USER/KEY exist).
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Prisma needs DATABASE_URL to load its config, also for typecheck, unit tests and build (it never
+# connects there). Only the integration jobs have the database these values point at.
+env:
+  DATABASE_URL: postgresql://iorder:ci-only-password@127.0.0.1:5432/iorder_test
+  TEST_DATABASE_URL: postgresql://iorder:ci-only-password@127.0.0.1:5432/iorder_test
+
+jobs:
+  # The three jobs below run side by side, so the wait is the slowest one, not their sum. Together
+  # they run every check; nothing is skipped to save time.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm build
+      # Fake adapters and demo users must never ship in the production web bundle.
+      - run: pnpm check:bundle
+
+  # Unit tests of the web apps and packages; the api's own unit tests are the slowest, so they run
+  # in shards of their own below.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm turbo run test --filter=!@iorder/api
+
+  unit-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm turbo run build --filter=@iorder/shared
+      - run: pnpm --filter @iorder/api db:generate
+      - run: pnpm --filter @iorder/api exec vitest run --shard=${{ matrix.shard }}/3
+
+  # Real PostgreSQL, no mocks (CLAUDE.md "Testing"). Migrations are applied by the suite itself.
+  # The suite's files must not overlap on one database, so each shard gets its own.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: iorder
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: iorder_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U iorder -d iorder_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm turbo run build --filter=@iorder/shared
+      - run: pnpm --filter @iorder/api db:generate
+      - run: pnpm --filter @iorder/api exec vitest run -c vitest.integration.config.ts --shard=${{ matrix.shard }}/5
+
+  # Continuous deployment of staging: every push to `dev` that passed every check above is
+  # shipped to the staging server the same way deploy/push.sh does by hand (git archive over ssh,
+  # then deploy.sh on the server). Secrets: STAGING_SSH_HOST, STAGING_SSH_USER and STAGING_SSH_KEY
+  # (a dedicated ed25519 deploy key, authorized on the server for that user only).
+  deploy-staging:
+    needs: [check, unit, unit-api, integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: https://dev.dashboard.iorder.uz
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the ssh key and the server's host key
+        env:
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$STAGING_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$STAGING_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy to staging
+        env:
+          IORDER_SSH: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+        run: sh deploy/push.sh staging
+
+  # Production: the same shape, from `master`, skipped until the server has /srv/iorder/prod and
+  # the owner sets the repository variable PROD_DEPLOY_ENABLED=true plus the PROD_SSH_* secrets.
+  deploy-prod:
+    needs: [check, unit, unit-api, integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.PROD_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://dashboard.iorder.uz
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the ssh key and the server's host key
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$PROD_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy to production
+        env:
+          IORDER_SSH: ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}
+        run: sh deploy/push.sh prod

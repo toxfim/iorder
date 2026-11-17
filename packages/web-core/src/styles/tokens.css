@@ -1,0 +1,515 @@
+/*
+ * Design tokens. Light values come from docs/private/design/v1 (specs.md section 2 and the inline
+ * styles of Dashboard v5-Neutral-Sidebar) with the contrast corrections listed in
+ * docs/private/design/dark-mode-plan.md (appendix A); dark values are the approved palette of
+ * docs/private/design/dark-mode-proposal.html (accent option B). The variable names are ours.
+ * Every colour token has a light and a dark value (styles/theme-tokens.test.ts); the two dark
+ * blocks at the end of this file must hold identical values.
+ *
+ * Roles (names are historical and value-based, so read this table before using one):
+ *   surfaces   --page (app background) < --f5 (sidebar, inputs) < --ef (card container) < --w (rows, modals)
+ *   text       --ink (primary) > --t2 (secondary) > --t3 (meta, labels); --b5 icons and disabled; --d9 strokes
+ *   borders    --e8 hairlines; --beige sand accent card
+ *   accent     --acc (CTA, focus ring), --acc-on (label on --acc), --acc-fg on --acc-bg* (soft pills)
+ *   inverted   --btn-ink-bg/--btn-ink-fg for small ink fills (buttons, toast, bars, markers; never
+ *              `background: var(--ink)`); --hero-bg/--hero-fg/--hero-muted for large blocks
+ *   status     --red, --green, --amber (text) on --*-bg (fills); --warn (low-stock dot)
+ */
+:root {
+  --page: #ffffff;
+  --w: #ffffff;
+  --on-ink: #ffffff;
+  --f5: #f5f5f5;
+  --ef: #efefef;
+  --e8: #e8e8e8;
+  --ink: #202020;
+  --t2: #4d4d4d;
+  --t3: #6b6b6b;
+  --b5: #8a8a8a;
+  --d9: #d9d9d9;
+  --beige: #ebe6dd;
+  --acc-fg: #b8380a;
+  --acc-bg: #ffe9e0;
+  --acc-bg2: #fff4ee;
+  --acc-bg3: #fffaf7;
+  --red: #b42318;
+  --red-bg: #fde7e7;
+  --green: #157644;
+  --green-bg: #e3f5ea;
+  --amber: #7a4f00;
+  --amber-bg: #fff4d6;
+  color-scheme: light;
+}
+
+/* Single-value tokens from the spec (the design hardcodes them inline). */
+:root {
+  --acc: #ff5a1f;
+  --acc-hover: #e84e15;
+  --acc-on-dark: #ff8a5c;
+  --acc-on: #1a0d07;
+  --warn: #b87d00;
+
+  /* Stage distribution line, in order (specs.md section 2). */
+  --stage-1: #ff5a1f;
+  --stage-2: #202020;
+  --stage-3: #4d4d4d;
+  --stage-4: #6b6b6b;
+  --stage-5: #8a8a8a;
+  --stage-6: #d9d9d9;
+
+  --overlay-drawer: rgba(32, 32, 32, 0.35);
+  --overlay-modal: rgba(32, 32, 32, 0.4);
+
+  /* Large blocks that are dark in light mode (customer order hero); a raised surface in dark. */
+  --hero-bg: var(--ink);
+  --hero-fg: var(--on-ink);
+  --hero-muted: var(--d9);
+  /* Small ink fills (buttons, badges, bars, markers): still the strongest element in dark. */
+  --btn-ink-bg: var(--ink);
+  --btn-ink-fg: var(--on-ink);
+  --btn-ink-muted: var(--b5);
+  /* 1px ring around floating layers (modal, drawer, command palette): invisible in light so the
+     light layout stays as designed, a hairline in dark where a shadow alone does not show. */
+  --float-ring: rgba(0, 0, 0, 0);
+  --selection-bg: var(--acc-bg);
+
+  /* Typography */
+  --font-ui: 'Onest', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --fs-h1: 32px;
+  --fs-section: 16px;
+  --fs-body: 14px;
+  --fs-body-lg: 15px;
+  --fs-small: 13px;
+  --fs-meta: 12px;
+  --fs-group: 11px;
+  /* Customer pages: page title and the order total. */
+  --fs-title: 26px;
+  --fs-amount: 22px;
+  --fs-kpi: clamp(40px, 4.6vw, 64px);
+
+  /* Radius scale (specs.md section 3) */
+  --r-card: 20px;
+  --r-panel: 16px;
+  --r-row: 14px;
+  --r-input: 12px;
+  --r-btn-sm: 10px;
+  --r-pill: 8px;
+  --r-kbd: 6px;
+
+  /* Spacing */
+  --gap-row: 4px;
+  --gap-card: 12px;
+  --gap-block: 20px;
+  --container-pad: 8px;
+  /* Smallest comfortable touch target on a phone. */
+  --tap-min: 44px;
+  --page-max: 1440px;
+  --page-pad-x: 40px;
+  --page-pad-top: 28px;
+  --page-pad-bottom: 64px;
+  --sidebar-w: 252px;
+
+  /* Shadows */
+  --sh-seg: 0 1px 2px rgba(32, 32, 32, 0.08);
+  --sh-card-hover: 0 6px 20px rgba(32, 32, 32, 0.06);
+  --sh-dropdown: 0 12px 32px rgba(32, 32, 32, 0.12);
+  --sh-drawer: -20px 0 40px rgba(32, 32, 32, 0.12);
+  /* Mirror of --sh-drawer for the left-hand mobile navigation drawer. */
+  --sh-drawer-left: 20px 0 40px rgba(32, 32, 32, 0.12);
+  --sh-toast: 0 10px 30px rgba(0, 0, 0, 0.18);
+  --sh-cmdk: 0 24px 60px rgba(32, 32, 32, 0.25);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-drawer-out: 220ms;
+
+  /* Stacking (specs.md section 4) */
+  --z-sticky: 3;
+  --z-dropdown-layer: 5;
+  --z-dropdown: 6;
+  --z-drawer: 10;
+  --z-modal: 20;
+  /* Dropdown menus are teleported to <body> and may open inside a drawer or modal. */
+  --z-popover: 35;
+  --z-toast: 30;
+  --z-cmdk: 40;
+}
+
+/* The shell paddings shrink on phones: the app also runs inside Telegram. */
+@media (max-width: 720px) {
+  :root {
+    --page-pad-x: 16px;
+    --page-pad-top: 16px;
+    --page-pad-bottom: 40px;
+  }
+}
+
+/*
+ * Dark theme. Same token names, dark values (docs/private/design/dark-mode-proposal.html, accent B).
+ * The explicit choice (data-theme='dark', set by public/theme-init.js and useTheme) and the
+ * system choice (no attribute + prefers-color-scheme) hold IDENTICAL declarations; the parity
+ * test fails if they drift. Elevation in dark comes from lightness: --page < --f5 < --ef < --w.
+ */
+:root[data-theme='dark'] {
+  --page: #10141a;
+  --w: #232a34;
+  --on-ink: #10141a;
+  --f5: #151a21;
+  --ef: #1a2028;
+  --e8: #3b4654;
+  --ink: #e6e9ed;
+  --t2: #b3bac4;
+  --t3: #8c95a2;
+  --b5: #6b7482;
+  --d9: #4b5461;
+  --beige: #2b2a27;
+  --acc-fg: #ff9b74;
+  --acc-bg: #3a2219;
+  --acc-bg2: #2d211c;
+  --acc-bg3: #262020;
+  --red: #f28b82;
+  --red-bg: #3b2024;
+  --green: #6ccb97;
+  --green-bg: #18302a;
+  --amber: #e8b455;
+  --amber-bg: #392d13;
+  --acc: #ee6f45;
+  --acc-hover: #f58762;
+  --acc-on-dark: #b8380a;
+  --acc-on: #1a0d07;
+  --warn: #e5aa3a;
+  --stage-1: #ee6f45;
+  --stage-2: #e6e9ed;
+  --stage-3: #b3bac4;
+  --stage-4: #8c95a2;
+  --stage-5: #6b7482;
+  --stage-6: #4b5461;
+  --overlay-drawer: rgba(5, 7, 10, 0.55);
+  --overlay-modal: rgba(5, 7, 10, 0.62);
+  --hero-bg: var(--w);
+  --hero-fg: var(--ink);
+  --hero-muted: var(--t2);
+  --btn-ink-bg: var(--ink);
+  --btn-ink-fg: var(--on-ink);
+  --btn-ink-muted: var(--d9);
+  --float-ring: var(--e8);
+  --selection-bg: var(--acc-bg);
+  --sh-seg: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --sh-card-hover: 0 6px 20px rgba(0, 0, 0, 0.35);
+  --sh-dropdown: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --sh-drawer: -20px 0 40px rgba(0, 0, 0, 0.5);
+  --sh-drawer-left: 20px 0 40px rgba(0, 0, 0, 0.5);
+  --sh-toast: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --sh-cmdk: 0 24px 60px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --page: #10141a;
+    --w: #232a34;
+    --on-ink: #10141a;
+    --f5: #151a21;
+    --ef: #1a2028;
+    --e8: #3b4654;
+    --ink: #e6e9ed;
+    --t2: #b3bac4;
+    --t3: #8c95a2;
+    --b5: #6b7482;
+    --d9: #4b5461;
+    --beige: #2b2a27;
+    --acc-fg: #ff9b74;
+    --acc-bg: #3a2219;
+    --acc-bg2: #2d211c;
+    --acc-bg3: #262020;
+    --red: #f28b82;
+    --red-bg: #3b2024;
+    --green: #6ccb97;
+    --green-bg: #18302a;
+    --amber: #e8b455;
+    --amber-bg: #392d13;
+    --acc: #ee6f45;
+    --acc-hover: #f58762;
+    --acc-on-dark: #b8380a;
+    --acc-on: #1a0d07;
+    --warn: #e5aa3a;
+    --stage-1: #ee6f45;
+    --stage-2: #e6e9ed;
+    --stage-3: #b3bac4;
+    --stage-4: #8c95a2;
+    --stage-5: #6b7482;
+    --stage-6: #4b5461;
+    --overlay-drawer: rgba(5, 7, 10, 0.55);
+    --overlay-modal: rgba(5, 7, 10, 0.62);
+    --hero-bg: var(--w);
+    --hero-fg: var(--ink);
+    --hero-muted: var(--t2);
+    --btn-ink-bg: var(--ink);
+    --btn-ink-fg: var(--on-ink);
+    --btn-ink-muted: var(--d9);
+    --float-ring: var(--e8);
+    --selection-bg: var(--acc-bg);
+    --sh-seg: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --sh-card-hover: 0 6px 20px rgba(0, 0, 0, 0.35);
+    --sh-dropdown: 0 12px 32px rgba(0, 0, 0, 0.45);
+    --sh-drawer: -20px 0 40px rgba(0, 0, 0, 0.5);
+    --sh-drawer-left: 20px 0 40px rgba(0, 0, 0, 0.5);
+    --sh-toast: 0 10px 30px rgba(0, 0, 0, 0.5);
+    --sh-cmdk: 0 24px 60px rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+}
+/* Customer-only Figma palette; staff theme tokens remain independent. */
+:root[data-customer-app],
+.app,
+.customer-sheet {
+  --page: #f6f6f7;
+  --w: #ffffff;
+  --ink: #15171c;
+  --t2: #51535d;
+  --t3: #696b73;
+  --f5: #f0f0f3;
+  --ef: #e9e9ec;
+  --e8: #e7e7ea;
+  --d9: #d4d4db;
+  --acc: #b8380a;
+  --acc-on: #ffffff;
+  --acc-hover: #9c2e08;
+  --acc-fg: #b8380a;
+  --acc-bg: #fff0e9;
+  --btn-ink-bg: #b8380a;
+  --btn-ink-fg: #ffffff;
+  --hero-bg: #15171c;
+  --hero-fg: #ffffff;
+  --hero-muted: #bdbfc7;
+  --customer-hero-control: #34363e;
+  --on-ink: #ffffff;
+  --b5: #8a8a8a;
+  --beige: #ebe6dd;
+  --acc-bg2: #fff0e9;
+  --acc-bg3: #fffaf7;
+  --acc-on-dark: #ff8a5c;
+  --stage-1: #ff5a1f;
+  --red: #b42318;
+  --red-bg: #fde7e7;
+  --green: #157644;
+  --green-bg: #e3f5ea;
+  --amber: #7a4f00;
+  --amber-bg: #fff4d6;
+  --btn-ink-muted: #bdbfc7;
+  --overlay-modal: rgba(21, 23, 28, 0.35);
+  --overlay-drawer: var(--overlay-modal);
+  --float-ring: rgba(0, 0, 0, 0);
+  --selection-bg: var(--acc-bg);
+  color-scheme: light;
+}
+
+/*
+ * Staff-only palette of docs/private/design/v8 (Dashboard v8 Staff), active while the staff shell is
+ * mounted (StaffShell sets data-staff-app). The sidebar is dark in both themes (--side-*).
+ * Contrast fixes against v8 (WCAG AA for text): --t2 #5b616b and --t3 #6b7079 in light (v8:
+ * #737983 / #9ba1aa), --t3 #8a9099 in dark (v8: #7c828b), --acc-on dark ink on the orange
+ * button (v8: white, 3:1).
+ * v8 names map to ours: --e5 = --e8 (hairline), --f9 = --f5 (inputs, table head), --f0 = --ef
+ * (neutral pill), --hov = --hov (row hover). Every token set here is set again in both dark blocks
+ * below: this block comes after the base dark block, so a light value would otherwise win in dark.
+ */
+:root[data-staff-fonts] {
+  /* Inter and IBM Plex Mono (apps/staff/src/main.ts); the login page is outside StaffShell. */
+  --font-ui: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+:root[data-staff-app] {
+  --page: #f6f7f9;
+  --w: #ffffff;
+  --on-ink: #ffffff;
+  --f5: #f9fafb;
+  --ef: #f0f3f6;
+  --e8: #e5e7eb;
+  --d9: #e5e7eb;
+  --ink: #191c21;
+  --t2: #5b616b;
+  --t3: #6b7079;
+  --b5: #9ba1aa;
+  --beige: #f0f3f6;
+  --acc: #ff5b18;
+  --acc-hover: #e94f10;
+  --acc-on: #191c21;
+  --acc-on-dark: #ff8a57;
+  --acc-fg: #c74710;
+  --acc-bg: #fff0e8;
+  --acc-bg2: #fbf7f4;
+  --acc-bg3: #fbf7f4;
+  --red: #bf4747;
+  /* v8 draws red text on the neutral grey (TONE r), not on a pink fill. */
+  --red-bg: #f0f3f6;
+  --green: #258460;
+  --green-bg: #eaf6f0;
+  --blue: #376c9b;
+  --blue-bg: #edf3fa;
+  --hov: #fbf7f4;
+  /* Label on the solid red (danger) button. */
+  --on-red: #ffffff;
+  --stage-1: #ff5b18;
+  --stage-2: #191c21;
+  --side-bg: #15181d;
+  --side-hover: #1c2026;
+  --side-line: #2a2d33;
+  --side-active: #34231d;
+  --side-fg: #b3b7bf;
+  --side-strong: #ffffff;
+  --side-muted: #9ba1aa;
+  /* Chevrons, the sign-out icon and the footer line (decorative or 9px meta, as in v8). */
+  --side-dim: #737983;
+  --side-icon-active: #ff5b18;
+  --side-ok: #5bc99b;
+  --btn-ink-bg: #15181d;
+  --btn-ink-fg: #ffffff;
+  --hero-bg: #15181d;
+  --hero-fg: #ffffff;
+  --hero-muted: #b3b7bf;
+  --selection-bg: var(--acc-bg);
+  --overlay-modal: rgba(15, 17, 21, 0.5);
+  --overlay-drawer: rgba(15, 17, 21, 0.4);
+  --sh-dropdown: 0 16px 40px rgba(15, 17, 21, 0.14);
+  --sh-toast: 0 12px 30px rgba(0, 0, 0, 0.25);
+  --sh-cmdk: 0 24px 60px rgba(0, 0, 0, 0.25);
+  /* The soft orange halo around a focused input (v8: inset 1px accent + 3px 15% accent). */
+  --ring-focus: 0 0 0 3px rgba(255, 91, 24, 0.15);
+  /* Radii: cards 12, tiles and table panels 10, buttons 8, inputs 7, pills 6, count badges 4,
+     dialogs 14. */
+  --r-card: 12px;
+  --r-panel: 12px;
+  --r-row: 10px;
+  --r-input: 7px;
+  --r-btn-sm: 8px;
+  --r-pill: 6px;
+  --r-kbd: 4px;
+  --r-modal: 14px;
+  --fs-h1: 28px;
+  --fs-section: 15px;
+  --fs-body: 13px;
+  --fs-body-lg: 14px;
+  --fs-small: 12px;
+  --fs-meta: 11px;
+  --fs-group: 10px;
+  --sidebar-w: 232px;
+  --page-pad-x: 32px;
+  --page-pad-top: 32px;
+  --topbar-h: 72px;
+  color-scheme: light;
+}
+
+/* The staff shell paddings shrink on phones too (more specific than the base rule above). */
+@media (max-width: 720px) {
+  :root[data-staff-app] {
+    --page-pad-x: 16px;
+    --page-pad-top: 16px;
+  }
+}
+
+:root[data-staff-app][data-theme='dark'] {
+  --page: #0f1115;
+  --w: #171a1f;
+  --on-ink: #0f1115;
+  --f5: #1c1f25;
+  --ef: #22262d;
+  --e8: #2a2e35;
+  --d9: #2a2e35;
+  --ink: #e8eaed;
+  --t2: #9aa0a9;
+  --t3: #8a9099;
+  --b5: #7c828b;
+  --beige: #22262d;
+  --acc: #ff8a57;
+  --acc-hover: #ff5b18;
+  --acc-on: #0f1115;
+  --acc-fg: #ff8a57;
+  --acc-bg: #33201a;
+  --acc-bg2: #1f1c1a;
+  --acc-bg3: #1f1c1a;
+  --red: #f07b7b;
+  --red-bg: #22262d;
+  --green: #4fc38f;
+  --green-bg: #15291f;
+  --blue: #7daedb;
+  --blue-bg: #172433;
+  --hov: #1f1c1a;
+  --on-red: #0f1115;
+  --stage-1: #ff8a57;
+  --stage-2: #e8eaed;
+  --btn-ink-bg: #e8eaed;
+  --btn-ink-fg: #0f1115;
+  --hero-bg: #171a1f;
+  --hero-fg: #e8eaed;
+  --hero-muted: #9aa0a9;
+  --overlay-modal: rgba(5, 7, 10, 0.62);
+  --overlay-drawer: rgba(5, 7, 10, 0.55);
+  --sh-dropdown: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --sh-toast: 0 12px 30px rgba(0, 0, 0, 0.5);
+  --sh-cmdk: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --ring-focus: 0 0 0 3px rgba(255, 138, 87, 0.2);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-staff-app]:not([data-theme='light']) {
+    --page: #0f1115;
+    --w: #171a1f;
+    --on-ink: #0f1115;
+    --f5: #1c1f25;
+    --ef: #22262d;
+    --e8: #2a2e35;
+    --d9: #2a2e35;
+    --ink: #e8eaed;
+    --t2: #9aa0a9;
+    --t3: #8a9099;
+    --b5: #7c828b;
+    --beige: #22262d;
+    --acc: #ff8a57;
+    --acc-hover: #ff5b18;
+    --acc-on: #0f1115;
+    --acc-fg: #ff8a57;
+    --acc-bg: #33201a;
+    --acc-bg2: #1f1c1a;
+    --acc-bg3: #1f1c1a;
+    --red: #f07b7b;
+    --red-bg: #22262d;
+    --green: #4fc38f;
+    --green-bg: #15291f;
+    --blue: #7daedb;
+    --blue-bg: #172433;
+    --hov: #1f1c1a;
+    --on-red: #0f1115;
+    --stage-1: #ff8a57;
+    --stage-2: #e8eaed;
+    --btn-ink-bg: #e8eaed;
+    --btn-ink-fg: #0f1115;
+    --hero-bg: #171a1f;
+    --hero-fg: #e8eaed;
+    --hero-muted: #9aa0a9;
+    --overlay-modal: rgba(5, 7, 10, 0.62);
+    --overlay-drawer: rgba(5, 7, 10, 0.55);
+    --sh-dropdown: 0 16px 40px rgba(0, 0, 0, 0.45);
+    --sh-toast: 0 12px 30px rgba(0, 0, 0, 0.5);
+    --sh-cmdk: 0 24px 60px rgba(0, 0, 0, 0.55);
+    --ring-focus: 0 0 0 3px rgba(255, 138, 87, 0.2);
+    color-scheme: dark;
+  }
+}
+
+/* Authentication uses the approved Figma light palette in both apps. */
+.auth-page {
+  --auth-page: #f6f6f7;
+  --auth-white: #ffffff;
+  --auth-ink: #15171c;
+  --auth-muted: #696b73;
+  --auth-faint: #a0a1a8;
+  --auth-line: #e9e9ed;
+  --auth-accent: #b8380a;
+  --auth-orange: #ff5a1f;
+  --auth-soft: #fff0e9;
+  --auth-hover: #9c2e08;
+}

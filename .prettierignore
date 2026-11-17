@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+# Docs are hand-written; formatting them is a separate decision
+docs
+apps/api/src/generated

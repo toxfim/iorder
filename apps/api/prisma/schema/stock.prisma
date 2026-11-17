@@ -1,0 +1,20 @@
+/// Indicative stock per product (a read-only copy built from the sheet, never a reservation,
+/// hard rule 10). Owned by the catalog module. It is an AGGREGATE: the sum of the available
+/// quantity over the product's delivery lines (price_reference). It carries NO cost and NO
+/// supplier by design; a test scans this file for cost-like names. Not exposed to customers yet
+/// (their visibility is a pending [T] setting; OPEN: whether customers will see the raw
+/// number or a bucket such as "in stock / few / none" is not decided).
+///
+/// PRODUCTION GRANTS: once the two-role split exists (migrator vs application), the application
+/// role needs only SELECT, INSERT and UPDATE on this table. No DELETE, no TRUNCATE.
+model StockCache {
+  productId String   @id @map("product_id") @db.Uuid
+  /// Decimal(18,3): same scale as the delivery quantities it is summed from.
+  quantity  Decimal  @db.Decimal(18, 3)
+  /// Last time the quantity was changed by a sync (unchanged aggregates are not rewritten).
+  syncedAt  DateTime @map("synced_at") @db.Timestamptz(3)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@map("stock_cache")
+}

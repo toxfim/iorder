@@ -1,0 +1,52 @@
+{
+  "name": "@iorder/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "typecheck": "pnpm db:generate && tsc --noEmit",
+    "test": "pnpm db:generate && vitest run --passWithNoTests",
+    "test:integration": "pnpm db:generate && vitest run -c vitest.integration.config.ts --passWithNoTests",
+    "build": "pnpm db:generate && tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "dev": "node scripts/dev.mjs",
+    "seed:admin": "node --env-file-if-exists=../../.env dist/cli/seed-admin.main.js",
+    "staff:bootstrap-admin": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/staff-bootstrap-admin.main.js",
+    "bot:polling": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/bot-polling.main.js",
+    "bot:set-commands": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/bot-set-commands.main.js",
+    "bot:dispatch-once": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/bot-dispatch-once.main.js",
+    "sheets:sync-once": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/sheets-sync-once.main.js",
+    "worker": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/worker.js",
+    "jobs:migrate": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/jobs-migrate.main.js",
+    "api:token-issue": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/api-token-issue.main.js",
+    "api:token-revoke": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/api-token-revoke.main.js",
+    "seed:admin:dev": "turbo run build --filter=@iorder/api && node --env-file-if-exists=../../.env dist/cli/seed-admin.main.js"
+  },
+  "dependencies": {
+    "@iorder/shared": "workspace:*",
+    "@nestjs/common": "^12.2.0",
+    "@nestjs/core": "^12.2.0",
+    "@nestjs/platform-express": "^12.2.0",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "exceljs": "4.4.0",
+    "grammy": "1.46.0",
+    "pg": "^8.23.1",
+    "pg-boss": "12.38.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "0.35.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^12.2.0",
+    "@swc/core": "^1.16.18",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "prisma": "7.10.1",
+    "unplugin-swc": "^2.0.0"
+  }
+}

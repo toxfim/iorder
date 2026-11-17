@@ -1,0 +1,38 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Secrets and local config: never commit
+.env
+.env.*
+!.env.example
+
+.DS_Store
+.idea/
+.vscode/
+
+# Generated Prisma client (rebuilt by `pnpm --filter @iorder/api db:generate`)
+apps/api/src/generated/
+
+# Uploaded files of the local api (MEDIA_DIR unset = <repo>/.media)
+.media/
+
+# Agent worktrees (local only)
+.claude/worktrees/
+
+# Logs (dev servers, tooling)
+*.log
+
+# Credential files must never be committed, wherever they are placed
+credentials*.json
+*.local.json
+*service_account*.json
+
+# Turborepo local cache
+.turbo/
+
+# Local agent notes and screenshots (not part of the repo)
+AGENTS.md
+# Private docs (repo toxfim/iorder-docs), cloned here
+docs/private/

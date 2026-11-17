@@ -1,0 +1,288 @@
+enum OrderStatus {
+  SUBMITTED
+  MANAGER_APPROVED
+  ACCOUNTING_CLEARED
+  RELEASED
+  DELIVERED
+  RECEIVED
+  REJECTED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+
+  @@map("payment_status")
+}
+
+/// How the customer pays for this order ("Naqd" / "Official"), chosen by the manager when approving
+/// ([C] 2026-10-24). Separate from payment_status; nothing in the workflow depends on it.
+enum PaymentMethod {
+  CASH
+  OFFICIAL
+
+  @@map("payment_method")
+}
+
+/// How the customer pays for this order ("To'lov turi", owner 2026-10-29): FULL at the sale price or
+/// DEFERRED in parts at the deferred price. Nothing to do with PaymentMethod ("Savdo turi").
+enum PaymentPlan {
+  FULL
+  DEFERRED
+
+  @@map("payment_plan")
+}
+
+enum AccountingMode {
+  PENDING
+  APPROVED
+  SKIPPED_BY_MANAGER
+
+  @@map("accounting_mode")
+}
+
+enum OrderEventType {
+  SUBMITTED
+  STATUS_CHANGED
+  ITEMS_EDITED
+  PAYMENT_STATUS_CHANGED
+  PAYMENT_METHOD_CHANGED
+  PAYMENT_PLAN_CHANGED
+  DRIVER_ASSIGNED
+  ACCOUNTING_SKIPPED
+  ACCOUNTING_REVIEWED
+  COMMENT_ADDED
+  UNIT_CODE_RECORDED
+  UNIT_CODE_CLEARED
+  GOODS_RETURNED
+  ALLOCATION_CHANGED
+
+  @@map("order_event_type")
+}
+
+enum NotificationRecipientKind {
+  USER
+  ROLE
+  ORGANIZATION_CHAT
+
+  @@map("notification_recipient_kind")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+
+  @@map("notification_status")
+}
+
+/// The cart stores NO prices: it is priced with the published price list when it is shown or
+/// submitted (data-model). One cart per person and organization.
+model Cart {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  /// Null only for the personal cart of a staff viewer ([C] 2026-11-09), who belongs to no
+  /// organization. Raw SQL in the migration keeps at most one such cart per person.
+  organizationId String?  @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items        CartItem[]
+
+  @@unique([userId, organizationId])
+  @@map("carts")
+}
+
+model CartItem {
+  cartId    String   @map("cart_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  quantity  Decimal  @db.Decimal(18, 3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([cartId, productId])
+  @@map("cart_items")
+}
+
+/// Hard rule 2: `status` changes only through OrdersService.transition (one transaction with the
+/// order_events and notification_outbox rows). Raw SQL in the migration adds the CHECKs, the
+/// number sequence, the item-immutability trigger and the total = sum(lines) constraint trigger.
+model Order {
+  id                   String         @id @default(uuid(7)) @db.Uuid
+  orderNumber          String         @unique @map("order_number")
+  organizationId       String         @map("organization_id") @db.Uuid
+  placedByUserId       String         @map("placed_by_user_id") @db.Uuid
+  priceListVersionId   String         @map("price_list_version_id") @db.Uuid
+  /// The price list tier the order was priced with [C, owner 2026-11-11]; frozen (trigger). Orders
+  /// older than the tiers are STANDARD (the only prices that existed).
+  priceTier            PriceTier      @default(STANDARD) @map("price_tier")
+  status               OrderStatus    @default(SUBMITTED)
+  /// Derived from the organization's payments ([C] 2026-10-26): PAID when the payments cover this
+  /// RECEIVED order after every older received one. Written only by the payment allocation.
+  paymentStatus        PaymentStatus  @default(UNPAID) @map("payment_status")
+  /// Null until the manager approves (the service requires it then). Staff-only: manager and
+  /// accountant. No CHECK ties it to the status because orders approved before this column existed
+  /// have none.
+  paymentMethod        PaymentMethod? @map("payment_method")
+  /// Chosen by the customer at submit; only the manager may change it, while SUBMITTED (a trigger
+  /// enforces that). The default exists for the rows older than the plan: the service always sets it.
+  paymentPlan          PaymentPlan    @default(FULL) @map("payment_plan")
+  /// Set once when the manager approves. From then on the warehouse sees the order and prepares it,
+  /// also when it is later rejected or cancelled ([C] 2026-10-30).
+  managerApprovedAt    DateTime?      @map("manager_approved_at") @db.Timestamptz(3)
+  accountingMode       AccountingMode @default(PENDING) @map("accounting_mode")
+  /// Set whenever the order reaches ACCOUNTING_CLEARED (approved by the accountant or skipped by
+  /// the manager).
+  accountingClearedAt  DateTime?      @map("accounting_cleared_at") @db.Timestamptz(3)
+  accountingReviewedAt DateTime?      @map("accounting_reviewed_at") @db.Timestamptz(3)
+  accountingReviewedBy String?        @map("accounting_reviewed_by") @db.Uuid
+  driverUserId         String?        @map("driver_user_id") @db.Uuid
+  /// The warehouse brought the goods of a rejected or cancelled order back ([P]). A time without a
+  /// person: the order closed before this rule, so there was nothing to bring back.
+  goodsReturnedAt      DateTime?      @map("goods_returned_at") @db.Timestamptz(3)
+  goodsReturnedBy      String?        @map("goods_returned_by") @db.Uuid
+  /// When the order became RECEIVED: from then on it counts in the organization's debt, and the
+  /// payments cover the orders in this order.
+  receivedAt           DateTime?      @map("received_at") @db.Timestamptz(3)
+  totalAmount          Decimal        @map("total_amount") @db.Decimal(18, 2)
+  currency             String         @default("UZS")
+  /// STAFF-ONLY. UZS per 1 USD, taken at submit from the same read that priced the order and frozen
+  /// (trigger): an edit or a plan change recomputes total_usd with this rate, never the current one.
+  usdRate              Decimal        @map("usd_rate") @db.Decimal(18, 4)
+  /// STAFF-ONLY. Sum of the lines' USD values, half up at six decimals: quantity x the USD snapshot of
+  /// the charged price, or a so'm line / usd_rate. The organization's debt and the payment allocation
+  /// are counted in this figure; displays show two decimals. A CHECK keeps it near the so'm total.
+  totalUsd             Decimal        @map("total_usd") @db.Decimal(18, 6)
+  customerComment      String?        @map("customer_comment")
+  idempotencyKey       String         @map("idempotency_key")
+  /// Bumped by every change of status or content; the guard of every conditional update.
+  rowVersion           Int            @default(1) @map("row_version")
+  submittedAt          DateTime       @map("submitted_at") @db.Timestamptz(3)
+  /// Set by the service from the application Clock.
+  updatedAt            DateTime       @map("updated_at") @db.Timestamptz(3)
+
+  organization     Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  placedBy         User                 @relation("OrderPlacedBy", fields: [placedByUserId], references: [id], onDelete: Restrict)
+  driver           User?                @relation("OrderDriver", fields: [driverUserId], references: [id], onDelete: Restrict)
+  reviewedBy       User?                @relation("OrderAccountingReviewer", fields: [accountingReviewedBy], references: [id], onDelete: Restrict)
+  goodsReturner    User?                @relation("OrderGoodsReturnedBy", fields: [goodsReturnedBy], references: [id], onDelete: Restrict)
+  priceListVersion PriceListVersion     @relation(fields: [priceListVersionId], references: [id], onDelete: Restrict)
+  items            OrderItem[]
+  events           OrderEvent[]
+  notifications    NotificationOutbox[]
+  units            OrderUnit[]
+  unitCodes        UnitCode[]
+  allocations      OrderAllocation[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, submittedAt])
+  @@index([status])
+  @@index([driverUserId])
+  @@map("orders")
+}
+
+/// The price SNAPSHOT: what the customer saw when the order was placed. Later catalog or price
+/// list changes never reach these rows. Frozen by a trigger once the order left SUBMITTED.
+model OrderItem {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  orderId             String   @map("order_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  productCodeSnapshot String   @map("product_code_snapshot")
+  nameSnapshot        String   @map("name_snapshot")
+  unitSnapshot        String   @map("unit_snapshot")
+  quantity            Decimal  @db.Decimal(18, 3)
+  /// The price the line is charged at: one of the two snapshots below, per the order's payment plan.
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(18, 2)
+  /// The sale price when the order was placed (plan FULL).
+  fullUnitPrice       Decimal  @map("full_unit_price") @db.Decimal(18, 2)
+  /// The deferred price when the order was placed (plan DEFERRED). Null: none, so that plan is
+  /// impossible. Also null on every line older than the plan.
+  deferredUnitPrice   Decimal? @map("deferred_unit_price") @db.Decimal(18, 2)
+  /// STAFF-ONLY. The sale price as the list had it in USD; immutable (trigger). Null: a legacy so'm
+  /// item, or a line older than this column; its USD value is then line_total / orders.usd_rate.
+  fullUnitPriceUsd    Decimal? @map("full_unit_price_usd") @db.Decimal(18, 2)
+  /// STAFF-ONLY. The deferred price as the list had it in USD; immutable (trigger). Null as above, or
+  /// when the line has no deferred price.
+  deferredUnitPriceUsd Decimal? @map("deferred_unit_price_usd") @db.Decimal(18, 2)
+  /// round(quantity * unit_price, 2); a CHECK recomputes it.
+  lineTotal           Decimal  @map("line_total") @db.Decimal(18, 2)
+
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  units       OrderUnit[]
+  allocations OrderAllocation[]
+
+  @@unique([orderId, productId])
+  @@map("order_items")
+}
+
+/// Append-only (triggers reject UPDATE, DELETE and TRUNCATE; the application role has no such
+/// privileges). `payload` is { before, after } with what changed from what to what.
+model OrderEvent {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  /// Stable ordering of events that share a timestamp.
+  seq         BigInt         @unique @default(autoincrement())
+  orderId     String         @map("order_id") @db.Uuid
+  eventType   OrderEventType @map("event_type")
+  fromStatus  OrderStatus?   @map("from_status")
+  toStatus    OrderStatus?   @map("to_status")
+  /// Null = the system acted. No workflow step runs as the system today.
+  actorUserId String?        @map("actor_user_id") @db.Uuid
+  actorRole   String         @map("actor_role")
+  comment     String?
+  payload     Json
+  createdAt   DateTime       @map("created_at") @db.Timestamptz(3)
+
+  order         Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor         User?                @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  notifications NotificationOutbox[]
+
+  @@index([orderId, seq])
+  @@map("order_events")
+}
+
+/// Written in the same transaction as the change that caused it. Sent rows are kept: with the
+/// event they are the record of what was sent to whom (full history). The payload carries only
+/// allow-listed order facts, never cost data. Only status, attempts and sent_at may change.
+model NotificationOutbox {
+  id                      String                    @id @default(uuid(7)) @db.Uuid
+  type                    String
+  recipientKind           NotificationRecipientKind @map("recipient_kind")
+  recipientUserId         String?                   @map("recipient_user_id") @db.Uuid
+  /// Staff role name for ROLE recipients (MANAGER, ACCOUNTANT, WAREHOUSE_MANAGER, ...).
+  recipientRole           String?                   @map("recipient_role")
+  recipientOrganizationId String?                   @map("recipient_organization_id") @db.Uuid
+  orderId                 String?                   @map("order_id") @db.Uuid
+  /// The history event this message belongs to; set at INSERT only. Null on rows written before
+  /// this column existed (they are shown without a notification marker).
+  orderEventId            String?                   @map("order_event_id") @db.Uuid
+  payload                 Json
+  status                  NotificationStatus        @default(PENDING)
+  attempts                Int                       @default(0)
+  dedupeKey               String                    @unique @map("dedupe_key")
+  createdAt               DateTime                  @map("created_at") @db.Timestamptz(3)
+  sentAt                  DateTime?                 @map("sent_at") @db.Timestamptz(3)
+  /// Delivery bookkeeping (migration telegram_bot_support). NULL = due now; otherwise the retry
+  /// time, or the lease end while a worker is sending.
+  nextAttemptAt           DateTime?                 @map("next_attempt_at") @db.Timestamptz(3)
+  /// Short code of the last failure; never a message text or a Telegram error body.
+  lastErrorCode           String?                   @map("last_error_code")
+  /// Telegram chat ids this row was already delivered to (a retry skips them).
+  deliveredChatIds        String[]                  @default([]) @map("delivered_chat_ids")
+
+  order                 Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderEvent            OrderEvent?   @relation(fields: [orderEventId], references: [id], onDelete: Restrict)
+  recipient             User?         @relation(fields: [recipientUserId], references: [id], onDelete: Restrict)
+  recipientOrganization Organization? @relation(fields: [recipientOrganizationId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([orderEventId])
+  @@map("notification_outbox")
+}

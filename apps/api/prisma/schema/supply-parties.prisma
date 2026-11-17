@@ -1,0 +1,14 @@
+/// A party number on a whole supply ([C] 2026-10-30): set by the manager, read live by orders. One
+/// row per supply (`delivery_ref` = the sheet's «ID заявки», no foreign key: price_reference holds
+/// one line per product of a supply). Several supplies may share a party. The row outlives the
+/// supply's lines: the sync soft-removing a line keeps the party. Every change is in audit_log.
+model SupplyParty {
+  deliveryRef String   @id @map("delivery_ref")
+  partyNumber String   @map("party_number")
+  /// Like price_reference.removed_by: the actor id as text, no foreign key.
+  updatedBy   String   @map("updated_by")
+  updatedAt   DateTime @map("updated_at") @db.Timestamptz(3)
+
+  @@index([partyNumber])
+  @@map("supply_parties")
+}

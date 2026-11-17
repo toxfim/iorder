@@ -1,0 +1,9 @@
+/// Structured key/value settings (accounting hours, default language, ...).
+/// Business rules that are not confirmed yet are read from here instead of being hard-coded.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("app_settings")
+}

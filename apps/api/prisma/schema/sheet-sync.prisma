@@ -1,0 +1,44 @@
+enum SheetSyncRunStatus {
+  OK
+  FAILED
+
+  @@map("sheet_sync_run_status")
+}
+
+enum SheetSyncTrigger {
+  MANUAL
+  SCHEDULED
+
+  @@map("sheet_sync_trigger")
+}
+
+/// STAFF-ONLY report history of the sheet sync: one row per run, also for a failed run. It may
+/// contain supplier names (skipped rows, each capped at 200 characters) but never cost values or
+/// other cell contents: a rejected row names a sheet header and a reason, a cost mismatch only a
+/// percentage, a failure only an error code (never a message or stack). The
+/// service keeps the latest 200 runs and prunes older ones in the same transaction as the insert.
+///
+/// PRODUCTION GRANTS: SELECT, INSERT and DELETE (pruning). No UPDATE, no TRUNCATE (trigger guard).
+model SheetSyncRun {
+  id                     String             @id @default(uuid(7)) @db.Uuid
+  startedAt              DateTime           @map("started_at") @db.Timestamptz(3)
+  finishedAt             DateTime           @map("finished_at") @db.Timestamptz(3)
+  status                 SheetSyncRunStatus
+  trigger                SheetSyncTrigger
+  /// Object of integers, see the shared sheetSyncRunCountsSchema.
+  counts                 Json
+  /// Array of { header, reason, productCode?, deliveryRef? }.
+  rejectedRows           Json               @map("rejected_rows")
+  /// Array of the normalized skipped supplier values (at most 200 characters each) with counts.
+  skippedSuppliers       Json               @map("skipped_suppliers")
+  /// Array of product codes created by this run.
+  createdProducts        Json               @map("created_products")
+  pendingRemovalRequests Int                @map("pending_removal_requests")
+  /// Array of { productCode, deliveryRef, differencePercent }.
+  costMismatches         Json               @map("cost_mismatches")
+  /// Set exactly when status is FAILED.
+  errorCode              String?            @map("error_code")
+
+  @@index([startedAt])
+  @@map("sheet_sync_runs")
+}

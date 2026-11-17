@@ -1,0 +1,80 @@
+enum UnitCodeKind {
+  IMEI
+  SERIAL
+  MARKING
+
+  @@map("unit_code_kind")
+}
+
+/// One row per physical piece of an order line, written in the transaction of the manager's
+/// approval [C 2026-10-30] (quantities are frozen after SUBMITTED). Every product type gets rows, also
+/// quantity goods without codes (reference-distributor regret: "decide on day 1: one row per piece").
+/// Append-only (trigger): the application role has SELECT and INSERT only.
+model OrderUnit {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  orderId     String   @map("order_id") @db.Uuid
+  orderItemId String   @map("order_item_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  /// 1..quantity of the line.
+  unitNo      Int      @map("unit_no")
+  createdAt   DateTime @map("created_at") @db.Timestamptz(3)
+
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem OrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  codes     UnitCode[]
+
+  @@unique([orderItemId, unitNo])
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_units")
+}
+
+/// A code scanned by the warehouse for one unit while picking. Never overwritten or deleted: a
+/// rescan or a clear VOIDS the old row (voided_* set once, by trigger) and the new value is a new
+/// row. Live = voided_at IS NULL; uniqueness (partial indexes in the migration) counts live rows only.
+model UnitCode {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  unitId     String       @map("unit_id") @db.Uuid
+  /// Denormalised for the uniqueness indexes and the order-level queries.
+  orderId    String       @map("order_id") @db.Uuid
+  productId  String       @map("product_id") @db.Uuid
+  kind       UnitCodeKind
+  /// IMEI: 1 or 2 (dual SIM); always 1 for SERIAL and MARKING (CHECK).
+  slot       Int          @db.SmallInt
+  /// Normalised as validated (packages/shared unit-codes).
+  codeValue  String       @map("code_value")
+  /// Uniqueness key: IMEI digits, SERIAL upper-case, MARKING the GS1 01+21 part.
+  codeKey    String       @map("code_key")
+  recordedBy String       @map("recorded_by") @db.Uuid
+  recordedAt DateTime     @map("recorded_at") @db.Timestamptz(3)
+  voidedAt   DateTime?    @map("voided_at") @db.Timestamptz(3)
+  voidedBy   String?      @map("voided_by") @db.Uuid
+  /// REPLACED (rescanned), CLEARED (removed in the picking screen), ORDER_CANCELLED.
+  voidReason String?      @map("void_reason")
+
+  unit     OrderUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  order    Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product  Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  recorder User      @relation("UnitCodeRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
+  voider   User?     @relation("UnitCodeVoidedBy", fields: [voidedBy], references: [id], onDelete: Restrict)
+
+  @@index([unitId])
+  @@index([orderId])
+  @@index([codeKey])
+  @@map("unit_codes")
+}
+
+/// The customer saw (or dismissed) the one-time "My Products" introduction. One row per person and
+/// organization; written once, never changed.
+model CustomerGoodsDiscoveryAck {
+  userId         String   @map("user_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  acknowledgedAt DateTime @map("acknowledged_at") @db.Timestamptz(3)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@id([userId, organizationId])
+  @@map("customer_goods_discovery_acks")
+}

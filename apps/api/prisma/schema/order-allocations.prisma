@@ -1,0 +1,31 @@
+/// A stock hold of one order line on one delivery line ([C] owner 2026-10-30), written with the
+/// manager's approval or the manager's later change. Active = hold_ended_at and voided_at both null;
+/// available stock = the sheet's available quantity minus active holds, computed on read, so neither
+/// the sheet (hard rule 10) nor stock_cache is ever changed. Carries no cost and no supplier.
+///
+/// Never deleted (trigger and grants): only hold_ended_at (the order was released, rejected or
+/// cancelled) or voided_at and voided_by (the manager replaced the plan) are set, once. An ended row
+/// stays as the record of which delivery line the goods left from.
+model OrderAllocation {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  orderId          String    @map("order_id") @db.Uuid
+  orderItemId      String    @map("order_item_id") @db.Uuid
+  productId        String    @map("product_id") @db.Uuid
+  priceReferenceId String    @map("price_reference_id") @db.Uuid
+  quantity         Decimal   @db.Decimal(18, 3)
+  createdBy        String    @map("created_by") @db.Uuid
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(3)
+  holdEndedAt      DateTime? @map("hold_ended_at") @db.Timestamptz(3)
+  voidedAt         DateTime? @map("voided_at") @db.Timestamptz(3)
+  voidedBy         String?   @map("voided_by") @db.Uuid
+
+  order          Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem      OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  priceReference PriceReference @relation(fields: [priceReferenceId], references: [id], onDelete: Restrict)
+  creator        User           @relation("OrderAllocationCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  voider         User?          @relation("OrderAllocationVoidedBy", fields: [voidedBy], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_allocations")
+}

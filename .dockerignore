@@ -1,0 +1,22 @@
+# deploy/Dockerfile does `COPY . .`: nothing local, generated or secret may enter the image.
+# deploy/push.sh ships `git archive` output, but a local `docker build` would otherwise bake in
+# every .env and the agent worktrees (which hold their own .env copies).
+.git
+.claude
+.turbo
+node_modules
+**/node_modules
+**/dist
+**/coverage
+**/src/generated
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*-service-account*.json
+screenshots
+docs

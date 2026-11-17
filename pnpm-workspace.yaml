@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Install scripts are blocked by default. Only these are allowed:
+# Prisma downloads its schema engine, SWC checks its platform binary.
+allowBuilds:
+  '@prisma/engines': true
+  '@swc/core': true
+  prisma: true
+
+# Cross-platform script shell, so `VAR= cmd` works on Windows too.
+# The root `dev` script uses it to stop the VS Code auto-attach debugger.
+shellEmulator: true
+
+# body-parser < 2.4.0 (pulled in by @nestjs/platform-express via express) has a DoS advisory
+# (GHSA-27r3-jxmh-p828: trailing bytes after a compressed body). Pinned up until Nest ships it.
+overrides:
+  body-parser: '>=2.4.0'

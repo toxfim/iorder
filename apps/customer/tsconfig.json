@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "noEmit": true,
+    "jsx": "preserve",
+    "verbatimModuleSyntax": true,
+    "paths": { "@/*": ["./src/*"], "@core/*": ["../../packages/web-core/src/*"] }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "vite.config.ts",
+    "../../packages/web-core/env.d.ts",
+    "../../packages/web-core/src/route-meta.d.ts"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@iorder/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./staff-cost": {
+      "types": "./dist/staff-cost.d.ts",
+      "default": "./dist/staff-cost.js"
+    },
+    "./staff-auth": {
+      "types": "./dist/staff-auth.d.ts",
+      "default": "./dist/staff-auth.js"
+    },
+    "./staff-orders": {
+      "types": "./dist/staff-orders.d.ts",
+      "default": "./dist/staff-orders.js"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}

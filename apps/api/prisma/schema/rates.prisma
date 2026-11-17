@@ -1,0 +1,23 @@
+/// STAFF-ONLY (exchange rate = cost-class data, hard rule 7): the USD rate that was in force when a
+/// price list version was published (value, source, and for a Central Bank rate the day it is valid
+/// for). One row per published version; there is NO row when no rate existed at publish time.
+///
+/// It is a separate table, not columns of price_list_versions, so the customer-facing version table
+/// stays free of cost-class names (the schema scan guards that). Immutable once the version is
+/// published: a trigger rejects any change unless the version is a DRAFT (the row is written in the
+/// same transaction that publishes the version).
+///
+/// PRODUCTION GRANTS: the application role needs only SELECT and INSERT on this table (rows are
+/// never updated or deleted by the application; a discarded DRAFT cascades), no TRUNCATE.
+model PriceListVersionRate {
+  versionId String    @id @map("version_id") @db.Uuid
+  usdRate   Decimal   @map("usd_rate") @db.Decimal(18, 4)
+  /// 'CHANNEL', 'CBU' or 'MANUAL' (CHECK in the migration).
+  source    String
+  /// The day a CHANNEL or CBU rate is valid for; null for MANUAL (CHECK in the migration).
+  rateDate  DateTime? @map("rate_date") @db.Date
+
+  version PriceListVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@map("price_list_version_rates")
+}

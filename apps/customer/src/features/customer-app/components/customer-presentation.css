@@ -1,0 +1,364 @@
+/* The end of a paged list. Scrolling loads the next page, so the button stays out of sight in its
+   reserved space: it shows only for a slow page, after a failure and for the keyboard. */
+.list-end > * {
+  opacity: 0;
+  pointer-events: none;
+}
+.list-end--loading > * {
+  animation: list-end-show 0.2s ease-out 0.5s both;
+}
+.list-end--manual > *,
+.list-end > *:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+@keyframes list-end-show {
+  to {
+    opacity: 1;
+  }
+}
+html {
+  scroll-behavior: auto;
+}
+
+/* Above the bottom menu, which only the phone layout has. */
+@media (max-width: 959px) {
+  :root {
+    --toast-bottom: 77px;
+  }
+}
+
+/* Figma category geometry, scoped to customer pages and teleported sheets. */
+.app,
+.customer-sheet {
+  --customer-category-trigger-h: 38px;
+  --customer-category-search-h: 46px;
+  --customer-category-option-h: 49px;
+  --customer-category-list-h: 392px;
+  --customer-category-sheet-h: 612px;
+  --customer-category-sheet-radius: 24px;
+  --customer-category-heading-h: 30px;
+  --customer-category-handle-gap: 2px;
+  --customer-category-close-size: 20px;
+  --customer-category-chevron-size: 18px;
+  --customer-category-leading: 1.4;
+}
+.app .app__header {
+  background: var(--w);
+  border-bottom: 0;
+  justify-content: center;
+}
+.app .app__header .app__spacer {
+  display: none;
+}
+.app .app__header .logo .logo__img--light {
+  display: block;
+}
+.app .app__header .logo .logo__img--dark {
+  display: none;
+}
+.app .app__main {
+  padding: 20px 20px calc(var(--customer-bottom-h) + 20px);
+}
+.app .tab {
+  position: relative;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 400;
+  padding: 4px 0;
+}
+.app .tab--active {
+  color: var(--acc-fg);
+  background: transparent;
+  font-weight: 600;
+}
+.app .tab__icon {
+  width: 24px;
+  height: 24px;
+  background: currentColor;
+  mask: var(--customer-icon) center / contain no-repeat;
+}
+.tab__icon--home {
+  --customer-icon: url('../assets/icons/home-active.svg');
+}
+.tab__icon--grid {
+  --customer-icon: url('../assets/icons/grid.svg');
+}
+.tab__icon--orders {
+  --customer-icon: url('../assets/icons/orders.svg');
+}
+.tab__icon--cart {
+  --customer-icon: url('../assets/icons/cart.svg');
+}
+.tab__icon--profile {
+  --customer-icon: url('../assets/icons/profile.svg');
+}
+.app .tab .badge {
+  position: absolute;
+  top: 0;
+  right: 15%;
+}
+/* The bottom menu shows icons only; the label stays for screen readers. */
+@media (max-width: 959.98px) {
+  .app .tab__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+.app .head__title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.app .catalog .list {
+  gap: 10px;
+}
+.app .catalog .row {
+  background: var(--w);
+  border: 0;
+  border-radius: var(--r-row);
+  padding: 14px;
+  grid-template-areas: 'name name' 'code code' 'money action';
+  gap: 5px 10px;
+}
+.app .catalog .row__code {
+  font-family: var(--font-ui);
+}
+.app .cart .list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.app .cart .line {
+  background: var(--w);
+  border: 0;
+  border-radius: var(--r-row);
+  padding: 14px;
+}
+.app .cart .line__remove {
+  width: var(--tap-min);
+  padding: 0;
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+  color: var(--acc-fg);
+  background: var(--acc-bg);
+  border-radius: var(--r-input);
+}
+.app .cart .summary {
+  border: 0;
+  box-shadow: none;
+  border-radius: var(--r-row);
+}
+.app .cart .summary__note {
+  display: block;
+  font-size: 11px;
+}
+.app .orders .card {
+  border: 0;
+  border-radius: var(--r-row);
+  padding: 14px;
+  gap: 9px;
+}
+.app .orders .card__number {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.app .orders .card__date {
+  font-size: 11px;
+}
+.app .orders .card__bottom {
+  font-size: var(--fs-meta);
+}
+.app .orders .card__badges .badge:not(.badge--accent) {
+  background: var(--f5);
+  color: var(--t2);
+}
+.app .stepper__box {
+  border-color: transparent;
+  background: var(--acc-bg);
+}
+.app .stepper__btn,
+.app .stepper__input {
+  background: var(--acc-bg);
+  color: var(--acc-fg);
+}
+.app .stepper__btn:disabled {
+  color: var(--b5);
+}
+.app .orders > .search {
+  flex: none;
+  max-width: none;
+}
+.app .orders > .search .search__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.app .orders > .search .search__box,
+.app .catalog .search__box {
+  background: var(--w);
+  border: 0;
+  min-height: 46px;
+}
+.app .bar__link {
+  background: var(--acc);
+  color: var(--acc-on);
+}
+.app .bar__count {
+  color: var(--acc-on);
+}
+.app .bar__open {
+  background: transparent;
+  color: inherit;
+}
+.app .group__title {
+  background: var(--page);
+}
+.app .catalog .row__action .btn {
+  min-height: var(--tap-min);
+}
+.app .cart .line__code {
+  font-family: var(--font-ui);
+}
+.app .home .hero .bar__seg {
+  background: var(--customer-hero-control);
+}
+.app .home .hero .bar__seg--on {
+  background: var(--stage-1);
+}
+@media (min-width: 960px) {
+  .app .app__header {
+    justify-content: start;
+  }
+  .app .app__main {
+    padding: 36px 32px 64px;
+  }
+  .app .tab {
+    justify-content: start;
+    padding: 12px;
+    min-height: 48px;
+  }
+  .app .tab--active {
+    background: var(--acc-bg);
+  }
+  .app .tab .badge {
+    position: static;
+    margin-inline-start: auto;
+  }
+  .app .head__title,
+  .app .profile > h1 {
+    font-size: var(--fs-h1);
+  }
+  .app .home > header h1 {
+    font-size: var(--fs-h1);
+  }
+  .app .home .home-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+    gap: 24px;
+    align-items: stretch;
+  }
+  .app .home .home-active {
+    gap: 12px;
+  }
+  .app .home .hero {
+    flex: 1;
+    min-height: 216px;
+    padding: 24px;
+    justify-content: space-between;
+  }
+  .app .home .catalog-entry {
+    flex-direction: column;
+    align-items: start;
+    padding: 24px;
+    gap: 20px;
+  }
+  .app .home .catalog-entry > div {
+    flex: 0;
+  }
+  .app .home .catalog-entry > img:last-child {
+    margin-top: auto;
+    align-self: end;
+  }
+  .app .home .catalog-entry h2 {
+    font-size: 20px;
+  }
+  .app .home .home-recent {
+    padding: 24px;
+    border-radius: var(--r-card);
+    background: var(--w);
+    gap: 12px;
+  }
+  .app .home .recent-order {
+    min-height: 72px;
+    padding-block: 8px;
+  }
+  .app .profile {
+    max-width: 980px;
+    gap: 24px;
+    align-self: start;
+    width: 100%;
+  }
+  .app .profile .identity {
+    padding: 24px;
+  }
+  .app .profile .language {
+    max-width: 440px;
+  }
+  .app .profile .profile-sections {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .app .profile .details,
+  .app .profile .organization {
+    padding: 24px;
+  }
+  .app .profile .hint {
+    margin: 0;
+  }
+  .app .bar {
+    inset-inline-start: var(--customer-sidebar-w);
+  }
+  .app .cart .continue-shopping {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .app .cart .summary {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .app .cart .layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 24px;
+  }
+  .app .cart .line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'info remove' 'stepper total';
+  }
+  .app .tab {
+    flex-direction: row;
+    font-size: var(--fs-body);
+    gap: 8px;
+  }
+  .app .catalog .row {
+    grid-template-areas: none;
+    border-radius: 0;
+    border-bottom: 1px solid var(--e8);
+  }
+  .app .catalog .list {
+    gap: 0;
+  }
+}
+.app,
+.customer-sheet {
+  color: var(--ink);
+}

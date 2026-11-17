@@ -1,0 +1,134 @@
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("organization_status")
+}
+
+enum OrganizationRole {
+  SHOP_OWNER
+  SELLER
+
+  @@map("organization_role")
+}
+
+/// [C, owner 2026-11-11]: a Telegram group, or one individual (private chat with the bot).
+enum OrganizationType {
+  GROUP
+  PERSON
+
+  @@map("organization_type")
+}
+
+/// [C, owner 2026-11-11]: «Стандартный» / «Оптовик» / «Партнер». The price tier follows the label
+/// (PRICE_TIER_OF_LABEL in packages/shared).
+enum OrganizationLabel {
+  STANDARD
+  WHOLESALE
+  PARTNER
+  ALIF_FACTORING
+
+  @@map("organization_label")
+}
+
+/// The price list tier an order was priced with [C, owner 2026-11-11].
+enum PriceTier {
+  STANDARD
+  WHOLESALE_PARTNER
+  ALIF_FACTORING
+
+  @@map("price_tier")
+}
+
+enum MemberStatus {
+  ACTIVE
+  LEFT
+
+  @@map("member_status")
+}
+
+/// A customer organization: a Telegram group, or one person [C, owner 2026-11-11]. Raw SQL in the
+/// migration organization_type_label: a chat-less organization is INACTIVE, and the chat id sign
+/// matches the type (group ids are negative, a private chat is the person's positive user id).
+model Organization {
+  id                       String             @id @default(uuid(7)) @db.Uuid
+  name                     String
+  type                     OrganizationType   @default(GROUP)
+  label                    OrganizationLabel  @default(STANDARD)
+  /// The contact phone staff entered (+digits); staff-only.
+  phone                    String?
+  /// The group chat (GROUP) or the bound person's private chat (PERSON). Null only while a
+  /// staff-created organization waits for its invite to be used.
+  telegramChatId           BigInt?            @unique @map("telegram_chat_id")
+  /// The staff member who created it from the staff app; null for a group the bot registered.
+  createdByUserId          String?            @map("created_by_user_id") @db.Uuid
+  /// Set on a group the bot registered by itself when, a moment later, the group's invite link
+  /// bound the same chat to the staff-created organization (this one keeps its history, no chat).
+  mergedIntoOrganizationId String?            @map("merged_into_organization_id") @db.Uuid
+  status                   OrganizationStatus @default(ACTIVE)
+  /// Receives the daily price post. Off until the manager decides ([P] in the data model).
+  pricePostingEnabled      Boolean            @default(false) @map("price_posting_enabled")
+  /// Telegram time of the last group event that changed the status; an older event is ignored.
+  telegramStatusEventAt    DateTime?          @map("telegram_status_event_at") @db.Timestamptz(3)
+  /// Who added the bot to the group (Telegram's `my_chat_member.from`); only set for groups the
+  /// bot created. Staff see it to decide whether to activate the organization.
+  addedByTelegramUserId    BigInt?            @map("added_by_telegram_user_id")
+  addedByName              String?            @map("added_by_name")
+  /// [C, owner 2026-11-13] "deleting" an organization archives it (admin only, never a hard
+  /// delete). Raw SQL in the migration organization_archive: both set or both null, and an
+  /// archived organization is INACTIVE.
+  archivedAt               DateTime?          @map("archived_at") @db.Timestamptz(3)
+  archivedByUserId         String?            @map("archived_by_user_id") @db.Uuid
+  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime           @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  members            OrganizationMember[]
+  carts              Cart[]
+  orders             Order[]
+  notifications      NotificationOutbox[]
+  goodsDiscoveryAcks CustomerGoodsDiscoveryAck[]
+  payments           OrganizationPayment[]
+  invites            OrganizationInvite[]
+  archivedBy         User?                       @relation("OrganizationArchivedBy", fields: [archivedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("organizations")
+}
+
+/// A one-time bot link that binds a chat to a staff-created organization [P]. The raw token is kept
+/// so staff can show the link again while it is pending: staff-only, never in a customer response.
+/// At most one open (unused, not revoked) invite per organization (partial unique index).
+model OrganizationInvite {
+  id                   String    @id @default(uuid(7)) @db.Uuid
+  organizationId       String    @map("organization_id") @db.Uuid
+  token                String    @unique
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime  @map("created_at") @db.Timestamptz(3)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt               DateTime? @map("used_at") @db.Timestamptz(3)
+  usedByTelegramUserId BigInt?   @map("used_by_telegram_user_id")
+  revokedAt            DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@map("organization_invites")
+}
+
+/// Partial unique indexes (raw SQL, migration identity_organizations): a user has at most one
+/// ACTIVE membership, an organization has at most one ACTIVE SHOP_OWNER.
+model OrganizationMember {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           OrganizationRole
+  status         MemberStatus     @default(ACTIVE)
+  joinedAt       DateTime         @map("joined_at") @db.Timestamptz(3)
+  leftAt         DateTime?        @map("left_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}

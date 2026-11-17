@@ -1,0 +1,34 @@
+{
+  "name": "iorder",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "version": "0.0.0",
+  "description": "iOrder.uz: internal B2B ordering and order-tracking platform",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "NODE_OPTIONS= VSCODE_INSPECTOR_OPTIONS= turbo run dev",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "test:integration": "turbo run test:integration",
+    "check:bundle": "turbo run check:bundle"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "turbo": "2.11.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5",
+    "vue-eslint-parser": "^10.4.1"
+  }
+}

@@ -1,0 +1,70 @@
+enum PriceListStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("price_list_status")
+}
+
+enum PriceListSource {
+  MANUAL
+  SHEET_IMPORT
+
+  @@map("price_list_source")
+}
+
+/// Hand-written SQL in the migration adds what Prisma cannot express: at most one PUBLISHED
+/// row, at most one open DRAFT, and triggers that freeze published versions and their items.
+model PriceListVersion {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  /// Human-friendly, monotonically increasing; gaps are possible and meaningless.
+  number      Int             @unique @default(autoincrement())
+  status      PriceListStatus @default(DRAFT)
+  publishedAt DateTime?       @map("published_at") @db.Timestamptz(3)
+  /// Staff user id. No foreign key yet: the identity module and its users table do not exist.
+  publishedBy String?         @map("published_by")
+  note        String?
+  source      PriceListSource @default(MANUAL)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  items    PriceListItem[]
+  orders   Order[]
+  /// Staff-only snapshot of the USD rate at publish time (see rates.prisma). Null before a rate existed.
+  snapshot PriceListVersionRate?
+
+  @@map("price_list_versions")
+}
+
+model PriceListItem {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  versionId String  @map("version_id") @db.Uuid
+  productId String  @map("product_id") @db.Uuid
+  /// The sale price ("Цена $"), in `currency`.
+  basePrice Decimal @map("base_price") @db.Decimal(18, 2)
+  /// The deferred-payment price ("Отсрочка $", pay in parts) [owner 2026-10-29], in `currency`.
+  /// Null = none set.
+  deferredPrice Decimal? @map("deferred_price") @db.Decimal(18, 2)
+  /// The recommended retail price ("RRP") [C, owner 2026-11-09], in `currency`: what a shop may
+  /// sell one piece for. Shown to customers, never what an order costs. Null = none set.
+  rrp           Decimal? @db.Decimal(18, 2)
+  /// The «Оптовик/Партнер» tier [C, owner 2026-11-11]: sale and deferred price for organizations
+  /// labelled WHOLESALE or PARTNER, in `currency`. Null = none (that tier then gets the STANDARD
+  /// prices [P]). A deferred one needs a sale one (CHECK).
+  wholesalePrice         Decimal? @map("wholesale_price") @db.Decimal(18, 2)
+  wholesaleDeferredPrice Decimal? @map("wholesale_deferred_price") @db.Decimal(18, 2)
+  /// The «Alif factoring» tier [C, owner 2026-11-12]: sale and deferred price for organizations
+  /// labelled ALIF_FACTORING, in `currency`. Null = none: the product is then NOT offered to that
+  /// tier (no fallback). A deferred one needs a sale one (CHECK).
+  alifPrice              Decimal? @map("alif_price") @db.Decimal(18, 2)
+  alifDeferredPrice      Decimal? @map("alif_deferred_price") @db.Decimal(18, 2)
+  /// 'USD' for every item priced since 2026-10-29 (the UZS amount is derived from the USD rate
+  /// when the list is read); older rows keep 'UZS'.
+  currency  String  @default("USD")
+
+  version PriceListVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, productId])
+  @@index([productId])
+  @@map("price_list_items")
+}

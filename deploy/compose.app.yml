@@ -1,0 +1,57 @@
+# The api (and, when switched on, the worker) of ONE environment. deploy.sh runs it as
+#   IORDER_ENV=staging API_PORT=3100 docker compose -f deploy/compose.app.yml up -d
+# The worker is started only with `--profile worker` (jobs stay off until the owner decides).
+name: iorder-${IORDER_ENV:?set IORDER_ENV}
+
+x-app: &app
+  image: iorder-api:${IORDER_ENV}
+  restart: unless-stopped
+  # The process runs as `node` (Dockerfile) on a port above 1024: it needs no capability and
+  # must never gain one. (A read-only root filesystem is not set yet: it needs a check of what
+  # Node and Prisma write at runtime on the server's Docker 19.03 first.)
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  # Runtime settings of the environment. Never the migrator URL (production-db-roles.md).
+  env_file: /srv/iorder/${IORDER_ENV}/api.env
+  volumes:
+    # The Google service account key, if any: GOOGLE_SERVICE_ACCOUNT_FILE=/run/iorder-secrets/<file>
+    - /srv/iorder/${IORDER_ENV}/secrets:/run/iorder-secrets:ro
+  networks: [iorder]
+
+services:
+  api:
+    <<: *app
+    environment:
+      PORT: '3000'
+      # The server's kernel ignores mem_limit (no memory cgroup): Node caps its own heap.
+      NODE_OPTIONS: --max-old-space-size=384
+      # Uploaded product photos, on the host so they survive image rebuilds (see volumes).
+      MEDIA_DIR: /srv/media
+    # Listed again here: a service's own `volumes` replaces the anchor's list. Only the api writes
+    # photos (the worker reads them, see below). deploy.sh creates it owned by uid 1000 (`node`).
+    volumes:
+      - /srv/iorder/${IORDER_ENV}/secrets:/run/iorder-secrets:ro
+      - /srv/iorder/${IORDER_ENV}/media:/srv/media
+    ports:
+      # Loopback only: Apache is the one public entry.
+      - '127.0.0.1:${API_PORT:?set API_PORT}:3000'
+    cpus: 1
+
+  worker:
+    <<: *app
+    profiles: [worker]
+    command: ['node', 'dist/worker.js']
+    environment:
+      NODE_OPTIONS: --max-old-space-size=256
+      MEDIA_DIR: /srv/media
+    # Read-only: the outbox dispatcher puts the product photos into the price list file it posts
+    # to the groups; only the api writes photos.
+    volumes:
+      - /srv/iorder/${IORDER_ENV}/secrets:/run/iorder-secrets:ro
+      - /srv/iorder/${IORDER_ENV}/media:/srv/media:ro
+    cpus: 0.5
+
+networks:
+  iorder:
+    external: true
+    name: iorder

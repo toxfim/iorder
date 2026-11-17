@@ -1,0 +1,659 @@
+/* Owner's five scenes: Tap 2s, Pack 2.4s, Load 1.8s, Drive 1.6s, Done 2.2s. */
+.order-journey {
+  --delivery-duration: 10s;
+  --delivery-move: cubic-bezier(0.77, 0, 0.175, 1);
+  --delivery-enter: cubic-bezier(0.23, 1, 0.32, 1);
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--auth-ink);
+}
+.journey-art {
+  display: block;
+  width: min(100%, clamp(220px, 34vh, 340px));
+  height: auto;
+  aspect-ratio: 1;
+  margin-inline: auto;
+  overflow: hidden;
+}
+.delivery-ink {
+  fill: var(--auth-ink);
+}
+.delivery-orange,
+.delivery-tape {
+  fill: var(--auth-orange);
+}
+.delivery-paper,
+.delivery-box-front {
+  fill: var(--auth-page);
+}
+.delivery-white,
+.delivery-confetti-piece {
+  fill: var(--auth-white);
+}
+.delivery-soft {
+  fill: var(--auth-soft);
+}
+.delivery-muted {
+  fill: var(--auth-faint);
+}
+.delivery-phone-edge,
+.delivery-box-inside {
+  fill: var(--auth-muted);
+}
+.delivery-divider {
+  stroke: var(--auth-line);
+  stroke-width: 2;
+}
+.delivery-button-icon {
+  stroke: var(--auth-white);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.delivery-ground {
+  stroke: var(--auth-muted);
+  stroke-width: 4;
+}
+.delivery-phone {
+  transform: translate(370px, 200px);
+}
+.delivery-press {
+  transform-origin: 170px 610px;
+}
+.delivery-ripple {
+  stroke: var(--auth-orange);
+  stroke-width: 6;
+  transform-origin: 170px 610px;
+}
+.delivery-truck {
+  transform: translate(1240px, 520px);
+}
+.delivery-truck-body {
+  transform-origin: 90px 256px;
+}
+.delivery-wheel-spokes {
+  stroke: var(--auth-muted);
+  stroke-width: 8;
+  stroke-linecap: round;
+}
+.delivery-speed {
+  stroke: var(--auth-orange);
+  stroke-width: 8;
+  stroke-linecap: round;
+}
+.delivery-box {
+  transform: translate(300px, 820px);
+}
+.delivery-flap {
+  stroke: var(--auth-line);
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+.delivery-flap--left {
+  transform-origin: -80px -125px;
+  transform: rotate(-125deg);
+}
+.delivery-flap--right {
+  transform-origin: 80px -125px;
+  transform: rotate(125deg);
+}
+.delivery-tape {
+  transform-origin: 0 -130px;
+  transform: scaleY(0);
+}
+.delivery-shutter {
+  transform-origin: 0 20px;
+  transform: scaleY(0);
+}
+.delivery-finger {
+  transform: translate(880px, 1140px);
+}
+.delivery-finger circle {
+  fill: var(--auth-faint);
+  stroke: var(--auth-white);
+  stroke-width: 5;
+}
+.delivery-success {
+  transform-origin: 540px 420px;
+}
+.delivery-check path {
+  stroke: var(--auth-white);
+  stroke-width: 22;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.delivery-caption {
+  fill: var(--auth-white);
+  font: 600 52px var(--auth-font);
+  letter-spacing: -1px;
+}
+.delivery-ripple,
+.delivery-ground,
+.delivery-box,
+.delivery-item,
+.delivery-finger,
+.delivery-speed,
+.delivery-done {
+  opacity: 0;
+}
+
+/* Reduced motion retains the static phone; form focus does not interrupt the loop. */
+@media (prefers-reduced-motion: no-preference) {
+  .delivery-camera {
+    animation: delivery-camera var(--delivery-duration) linear infinite;
+  }
+  .delivery-phone {
+    animation: delivery-phone var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-press {
+    animation: delivery-press var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-ripple {
+    animation: delivery-ripple var(--delivery-duration) linear infinite;
+  }
+  .delivery-finger {
+    animation: delivery-finger var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-thumbnail--0 {
+    animation: delivery-thumb-0 var(--delivery-duration) linear infinite;
+  }
+  .delivery-thumbnail--1 {
+    animation: delivery-thumb-1 var(--delivery-duration) linear infinite;
+  }
+  .delivery-thumbnail--2 {
+    animation: delivery-thumb-2 var(--delivery-duration) linear infinite;
+  }
+  .delivery-ground {
+    animation: delivery-ground var(--delivery-duration) linear infinite;
+  }
+  .delivery-box {
+    animation: delivery-box var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-box-bounce {
+    animation: delivery-bounce var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-item--0 {
+    animation: delivery-item-0 var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-item--1 {
+    animation: delivery-item-1 var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-item--2 {
+    animation: delivery-item-2 var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-flap--left {
+    animation: delivery-flap-left var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-flap--right {
+    animation: delivery-flap-right var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-tape {
+    animation: delivery-tape var(--delivery-duration) linear infinite;
+  }
+  .delivery-truck {
+    animation: delivery-truck var(--delivery-duration) var(--delivery-move) infinite;
+  }
+  .delivery-truck-body {
+    animation: delivery-tilt var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-wheel {
+    animation: delivery-wheel var(--delivery-duration) linear infinite;
+  }
+  .delivery-shutter {
+    animation: delivery-shutter var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-speed {
+    animation: delivery-speed var(--delivery-duration) linear infinite;
+  }
+  .delivery-done {
+    animation: delivery-done var(--delivery-duration) linear infinite;
+  }
+  .delivery-success {
+    animation: delivery-success var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-check {
+    animation: delivery-check var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-caption {
+    animation: delivery-caption var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-logo {
+    animation: delivery-logo var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+  .delivery-confetti-piece {
+    animation: delivery-confetti var(--delivery-duration) var(--delivery-enter) infinite;
+  }
+}
+@keyframes delivery-camera {
+  0%,
+  95% {
+    opacity: 1;
+  }
+  99%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-phone {
+  0% {
+    opacity: 0;
+    transform: translate(370px, 200px) scale(0.9);
+  }
+  4.5%,
+  19.5% {
+    opacity: 1;
+    transform: translate(370px, 200px) scale(1);
+  }
+  26%,
+  44% {
+    opacity: 1;
+    transform: translate(657.4px, 289.8px) scale(0.78);
+  }
+  48.5%,
+  100% {
+    opacity: 0;
+    transform: translate(1217.4px, 289.8px) rotate(14deg) scale(0.78);
+  }
+}
+@keyframes delivery-press {
+  0%,
+  10%,
+  15%,
+  100% {
+    transform: scale(1);
+  }
+  11.2%,
+  12.5% {
+    transform: scale(0.93);
+  }
+}
+@keyframes delivery-ripple {
+  0%,
+  11.2% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  11.3% {
+    opacity: 1;
+  }
+  17.5%,
+  100% {
+    opacity: 0;
+    transform: scale(5.4);
+  }
+}
+@keyframes delivery-finger {
+  0%,
+  2.5% {
+    opacity: 0;
+    transform: translate(880px, 1140px);
+  }
+  4% {
+    opacity: 1;
+  }
+  9.5%,
+  10% {
+    opacity: 1;
+    transform: translate(552px, 822px);
+  }
+  11.2%,
+  12.5% {
+    transform: translate(552px, 822px) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(552px, 822px);
+  }
+  18%,
+  100% {
+    opacity: 0;
+    transform: translate(552px, 822px);
+  }
+}
+@keyframes delivery-thumb-0 {
+  0%,
+  27.49% {
+    opacity: 1;
+  }
+  27.5%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-thumb-1 {
+  0%,
+  30.49% {
+    opacity: 1;
+  }
+  30.5%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-thumb-2 {
+  0%,
+  33.49% {
+    opacity: 1;
+  }
+  33.5%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-ground {
+  0%,
+  20% {
+    opacity: 0;
+  }
+  25%,
+  75% {
+    opacity: 1;
+  }
+  78%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-box {
+  0%,
+  23% {
+    opacity: 0;
+    transform: translate(300px, 820px) scale(0.9);
+  }
+  27.5%,
+  53.5% {
+    opacity: 1;
+    transform: translate(300px, 820px) scale(1);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(300px, 820px) scale(1);
+  }
+  57.5% {
+    opacity: 1;
+    transform: translate(387px, 622px) scale(0.84);
+  }
+  60%,
+  62.9% {
+    opacity: 1;
+    transform: translate(474px, 725px) scale(0.68);
+  }
+  63%,
+  100% {
+    opacity: 0;
+    transform: translate(474px, 725px) scale(0.68);
+  }
+}
+@keyframes delivery-bounce {
+  0%,
+  32%,
+  35%,
+  38%,
+  53.5%,
+  57%,
+  100% {
+    transform: scaleY(1);
+  }
+  33%,
+  36%,
+  39% {
+    transform: scaleY(0.92);
+  }
+  55% {
+    transform: scaleY(0.85);
+  }
+}
+@keyframes delivery-item-0 {
+  0%,
+  27.49% {
+    opacity: 0;
+    transform: translate(410px, -396px) rotate(-200deg) scale(0.78);
+  }
+  27.5% {
+    opacity: 1;
+  }
+  30.25% {
+    opacity: 1;
+    transform: translate(188px, -390px) rotate(-100deg) scale(1.06);
+  }
+  33% {
+    opacity: 1;
+    transform: translate(-34px, -70px) scale(0.78);
+  }
+  33.5%,
+  100% {
+    opacity: 0;
+    transform: translate(-34px, -70px) scale(0.78);
+  }
+}
+@keyframes delivery-item-1 {
+  0%,
+  30.49% {
+    opacity: 0;
+    transform: translate(410px, -321px) rotate(200deg) scale(0.78);
+  }
+  30.5% {
+    opacity: 1;
+  }
+  33.25% {
+    opacity: 1;
+    transform: translate(205px, -365px) rotate(100deg) scale(1.06);
+  }
+  36% {
+    opacity: 1;
+    transform: translate(0, -70px) scale(0.78);
+  }
+  36.5%,
+  100% {
+    opacity: 0;
+    transform: translate(0, -70px) scale(0.78);
+  }
+}
+@keyframes delivery-item-2 {
+  0%,
+  33.49% {
+    opacity: 0;
+    transform: translate(410px, -246px) rotate(-200deg) scale(0.78);
+  }
+  33.5% {
+    opacity: 1;
+  }
+  36.25% {
+    opacity: 1;
+    transform: translate(222px, -328px) rotate(-100deg) scale(1.06);
+  }
+  39% {
+    opacity: 1;
+    transform: translate(34px, -70px) scale(0.78);
+  }
+  39.5%,
+  100% {
+    opacity: 0;
+    transform: translate(34px, -70px) scale(0.78);
+  }
+}
+@keyframes delivery-flap-left {
+  0%,
+  37% {
+    transform: rotate(-125deg);
+  }
+  39.5%,
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes delivery-flap-right {
+  0%,
+  38.5% {
+    transform: rotate(125deg);
+  }
+  41%,
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes delivery-tape {
+  0%,
+  41% {
+    transform: scaleY(0);
+  }
+  43%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+@keyframes delivery-truck {
+  0%,
+  46% {
+    transform: translate(1240px, 520px);
+  }
+  53.5%,
+  62.5% {
+    transform: translate(400px, 520px);
+  }
+  65% {
+    transform: translate(384px, 520px);
+  }
+  76%,
+  100% {
+    transform: translate(1534px, 520px);
+  }
+}
+@keyframes delivery-tilt {
+  0%,
+  53.5%,
+  58%,
+  62.5%,
+  100% {
+    transform: rotate(0);
+  }
+  55% {
+    transform: rotate(1.6deg);
+  }
+  56% {
+    transform: rotate(-0.6deg);
+  }
+  65% {
+    transform: rotate(1.2deg);
+  }
+  67%,
+  76% {
+    transform: rotate(-2.2deg);
+  }
+}
+@keyframes delivery-wheel {
+  0%,
+  46% {
+    transform: rotate(1094deg);
+  }
+  53.5%,
+  62.5% {
+    transform: rotate(0);
+  }
+  65% {
+    transform: rotate(-21deg);
+  }
+  76%,
+  100% {
+    transform: rotate(1477deg);
+  }
+}
+@keyframes delivery-shutter {
+  0%,
+  60% {
+    transform: scaleY(0);
+  }
+  62.5%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+@keyframes delivery-speed {
+  0%,
+  66.5% {
+    opacity: 0;
+    transform: scaleX(0.9);
+  }
+  70%,
+  74.5% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  76.5%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes delivery-done {
+  0%,
+  77.99% {
+    opacity: 0;
+  }
+  78%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes delivery-success {
+  0%,
+  78% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  83%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes delivery-check {
+  0%,
+  81.5% {
+    clip-path: inset(0 100% 0 0);
+  }
+  85.5%,
+  100% {
+    clip-path: inset(0);
+  }
+}
+@keyframes delivery-caption {
+  0%,
+  83.5% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  87.5%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes delivery-logo {
+  0%,
+  86.5% {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  90.5%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes delivery-confetti {
+  0%,
+  80% {
+    opacity: 0;
+    transform: translateY(-130px);
+  }
+  80.1% {
+    opacity: 1;
+  }
+  88%,
+  100% {
+    opacity: 0;
+    transform: translateY(-250px) rotate(180deg);
+  }
+}

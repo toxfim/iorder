@@ -1,0 +1,32 @@
+/// A photo of a product (owner 2026-10-29). The files live on disk under MEDIA_DIR
+/// (`product-images/<id>-large.webp`, `-thumb.webp`, `-original.<ext>`); this row is their record.
+/// Rows are never deleted: a removed photo keeps its row (removed_at/removed_by) and its files.
+/// At most one non-removed primary photo per product, and one non-removed row per file content
+/// (partial unique indexes in the migration product_images).
+model ProductImage {
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  productId           String    @map("product_id") @db.Uuid
+  isPrimary           Boolean   @map("is_primary")
+  /// Hex SHA-256 of the uploaded bytes (the original file).
+  sha256              String
+  /// Detected from the content (image/jpeg, image/png, image/webp), never the client's header.
+  originalContentType String    @map("original_content_type")
+  /// Of the stored large variant, after auto-rotation.
+  width               Int
+  height              Int
+  /// Of the original upload.
+  byteSize            Int       @map("byte_size")
+  /// Where the uploader found the photo; informational, never fetched by the server.
+  sourceUrl           String?   @map("source_url")
+  idempotencyKey      String?   @map("idempotency_key")
+  /// The acting person. Plain text without a foreign key, like audit_log.actor_user_id.
+  uploadedBy          String    @map("uploaded_by")
+  createdAt           DateTime  @map("created_at") @db.Timestamptz(3)
+  removedAt           DateTime? @map("removed_at") @db.Timestamptz(3)
+  removedBy           String?   @map("removed_by")
+  product             Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([uploadedBy, idempotencyKey])
+  @@index([productId])
+  @@map("product_images")
+}

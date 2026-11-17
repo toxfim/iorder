@@ -1,0 +1,134 @@
+enum Language {
+  UZ
+  RU
+  EN
+
+  @@map("language")
+}
+
+/// A sellable item. `productCode` is the company's ONE main key: the sheet's product id
+/// («Товар_ID»), the only key that links a product to the Google Sheet (case-insensitive).
+/// No cost, rate, supplier or stock fields live here: those are a separate, staff-only area.
+model Product {
+  id                  String       @id @default(uuid(7)) @db.Uuid
+  /// As entered (trimmed), original spelling. Never changes after creation.
+  productCode         String       @unique @map("product_code")
+  /// lower(product_code), a STORED GENERATED column (see migrations
+  /// sku_as_entered_case_insensitive and rename_sku_to_product_code): the case-insensitive key used for uniqueness and
+  /// every lookup. Never written by the application.
+  productCodeKey      String       @unique @default(dbgenerated()) @map("product_code_key")
+  /// LEGACY, no longer read: the company sells whole pieces only (owner, 2026-10-28), every product
+  /// is sold by PIECE_UNIT. Kept so older values are not lost; new rows get 'PIECE'.
+  unit                String?      @default("PIECE")
+  /// Staff-only (the sheet's category of the latest delivery line); never in a customer DTO.
+  category            String?
+  /// The staff-managed category (reference-distributor model, [C] 2026-10-25): a TEMPLATE whose defaults
+  /// are copied onto the product when it is linked. The product's own fields below are the rule.
+  categoryId          String?      @map("category_id") @db.Uuid
+  /// Which code the warehouse scans per unit while picking. Staff-only.
+  trackingType        TrackingType @default(NONE) @map("tracking_type")
+  /// Asl belgisi marking code required per unit, independent of trackingType. Staff-only.
+  markingRequired     Boolean      @default(false) @map("marking_required")
+  /// false while the rule is the untouched default (NONE); true once a person or a linked category
+  /// template set it. The staff editor suggests the company rule only while it is false.
+  codeRuleConfigured  Boolean      @default(false) @map("code_rule_configured")
+  isActive            Boolean      @default(true) @map("is_active")
+  /// True for a product STAFF added without a sheet «Товар_ID» [C, 2026-11-09]: its code is
+  /// system-made (IO-000123, sequence product_generated_code_seq), it has no stock and no cost
+  /// lines, and it is outside the allocation plan. A CHECK in the migration manual_products ties the
+  /// IO- prefix to this flag in both directions, so a sheet code can never look generated.
+  codeGenerated       Boolean      @default(false) @map("code_generated")
+  /// The sheet product this generated-code product was merged into [C, 2026-11-09]. Set once,
+  /// together with is_active = false; the application never clears it. NULL while it stands alone.
+  mergedIntoProductId String?      @map("merged_into_id") @db.Uuid
+  /// The brand STAFF chose (manual override, [C] 2026-10-28). NULL: the brand is found in the
+  /// product name (brand finder), or there is none. Groups the price list Excel file by sheet.
+  brandId             String?      @map("brand_id") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Set by the service from the application Clock (no @updatedAt: Prisma would use its own clock
+  /// and touch the row even for a no-op). The default only covers raw inserts.
+  updatedAt           DateTime     @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  translations     ProductTranslation[]
+  priceItems       PriceListItem[]
+  priceReferences  PriceReference[]
+  stock            StockCache?
+  removalRequests  SupplyRemovalRequest[]
+  cartItems        CartItem[]
+  orderItems       OrderItem[]
+  productCategory  ProductCategory?       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  orderUnits       OrderUnit[]
+  unitCodes        UnitCode[]
+  orderAllocations OrderAllocation[]
+  brand            Brand?                 @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  images           ProductImage[]
+  mergedInto       Product?               @relation("ProductMerge", fields: [mergedIntoProductId], references: [id], onDelete: Restrict)
+  mergedFrom       Product[]              @relation("ProductMerge")
+  successionsAsOlder ProductSuccession[]  @relation("SuccessionOlder")
+  successionsAsNewer ProductSuccession[]  @relation("SuccessionNewer")
+
+  @@index([category])
+  @@index([brandId])
+  @@index([categoryId])
+  @@index([mergedIntoProductId])
+  @@map("products")
+}
+
+model ProductTranslation {
+  productId   String   @map("product_id") @db.Uuid
+  lang        Language
+  name        String
+  description String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([productId, lang])
+  @@map("product_translations")
+}
+
+/// NONE = quantity goods (no per-unit code). IMEI and SERIAL are mutually exclusive.
+enum TrackingType {
+  NONE
+  IMEI
+  SERIAL
+
+  @@map("tracking_type")
+}
+
+/// Staff-managed product category: the defaults a product gets when it is linked to it. Changing a
+/// category never changes products already linked (not retroactive). Archived, never deleted.
+model ProductCategory {
+  id                     String       @id @default(uuid(7)) @db.Uuid
+  name                   String
+  /// lower(btrim(name)), STORED GENERATED: case-insensitive uniqueness and the match with the
+  /// sheet's «Категория» text. Never written by the application.
+  nameKey                String       @unique @default(dbgenerated()) @map("name_key")
+  trackingTypeDefault    TrackingType @default(NONE) @map("tracking_type_default")
+  markingRequiredDefault Boolean      @default(false) @map("marking_required_default")
+  isActive               Boolean      @default(true) @map("is_active")
+  createdAt              DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime     @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+/// A brand ([C] 2026-10-28): the price list Excel file has one sheet per brand. Added by the
+/// manager or the admin (audited), never renamed or deleted by the application. Six brands are
+/// seeded by the migration ([P]).
+model Brand {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  name            String
+  /// lower(btrim(name)), STORED GENERATED (migration brands): case-insensitive uniqueness. Never
+  /// written by the application.
+  nameKey         String   @unique @default(dbgenerated()) @map("name_key")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// The actor who created it (no foreign key, like price_list_versions.published_by). NULL for
+  /// the seeded rows.
+  createdByUserId String?  @map("created_by_user_id")
+
+  products Product[]
+
+  @@map("brands")
+}
