@@ -70,7 +70,7 @@ async function openAndRead(identity: string, path: string): Promise<string> {
     recent: ['DELIVERED', 'RECEIVED'],
   });
   await waitFor(() =>
-    expect(document.body.querySelector('.card, .orders, .head__org')).not.toBeNull(),
+    expect(document.body.querySelector('.card, .orders, .client__name')).not.toBeNull(),
   );
   // Open every card so the detail (items, contact) is part of the text as well.
   for (const button of Array.from(
@@ -85,7 +85,7 @@ async function openAndRead(identity: string, path: string): Promise<string> {
   const href = document.body.querySelector('a.btn--link')?.getAttribute('href');
   if (!href) return listText;
   await router.push(href);
-  await waitFor(() => expect(document.body.querySelector('.head__org')).not.toBeNull());
+  await waitFor(() => expect(document.body.querySelector('.client__name')).not.toBeNull());
   await flushPromises();
   return `${listText} ${document.body.textContent?.replace(/\s+/g, ' ') ?? ''}`;
 }

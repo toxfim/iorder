@@ -4,6 +4,11 @@ import { ORDER_STATUSES } from '../order-status.js';
 import { STAFF_ROLES } from '../roles.js';
 import { isoInstantSchema } from './common.js';
 import {
+  organizationLabelSchema,
+  organizationTypeSchema,
+  priceTierSchema,
+} from './organizations.js';
+import {
   amountSchema,
   currencySchema,
   idSchema,
@@ -144,6 +149,8 @@ export const staffOrderListQuerySchema = customerOrderListQuerySchema.extend({
   placedByUserId: idSchema.optional(),
   /** Submitted on the current business day. */
   period: z.enum(STAFF_ORDER_PERIODS).optional(),
+  /** The customer's payment plan ("To'lov turi"). FULL-view roles only, like the plan itself. */
+  paymentPlan: paymentPlanSchema.optional(),
   /**
    * Part of the order number ("10005" or "io-10005"), the organization's name or, for the roles
    * that see it, the name of who placed the order; letter case is ignored.
@@ -341,6 +348,8 @@ const staffOrderBase = {
   orderNumber: z.string(),
   organizationId: idSchema,
   organizationName: z.string(),
+  /** GROUP («Guruh») or PERSON («Yakka shaxs»): every staff role that sees the order. */
+  organizationType: organizationTypeSchema,
   status: orderStatusSchema,
   itemCount: z.int().nonnegative(),
   submittedAt: isoInstantSchema,
@@ -355,6 +364,11 @@ const staffOrderBase = {
 const fullSummaryFields = {
   ...staffOrderBase,
   detail: z.literal('FULL'),
+  /**
+   * The organization's CURRENT label (its price tier today; the order keeps the tier it was priced
+   * at). FULL view only: the roles that see money, never the warehouse or the driver.
+   */
+  organizationLabel: organizationLabelSchema,
   paymentStatus: paymentStatusSchema,
   paymentPlan: paymentPlanSchema,
   totalAmount: amountSchema,
@@ -673,8 +687,110 @@ export const allocationPreviewSchema = z.strictObject({
 });
 export type AllocationPreview = z.infer<typeof allocationPreviewSchema>;
 
+// ---------------------------------------------------------------------------------------
+// A new order on behalf of a customer ([C, owner 2026-11-20]: "Manager nomidan ham buyurtma
+// yaratilishi kerak"). Manager only. The order is an ordinary SUBMITTED order of the organization,
+// placed by the chosen member, priced like a customer submit at the organization's tier.
+// ---------------------------------------------------------------------------------------
+
+/** Step 1: ACTIVE organizations whose name, or a current member's name or phone, matches. */
+export const newOrderCustomerQuerySchema = z.strictObject({
+  search: z.string().trim().min(1).max(100).optional(),
+  type: organizationTypeSchema.optional(),
+  label: organizationLabelSchema.optional(),
+});
+export type NewOrderCustomerQuery = z.output<typeof newOrderCustomerQuerySchema>;
+
+/** At most this many organizations per answer [P]: a search should narrow it. */
+export const NEW_ORDER_CUSTOMER_LIMIT = 50;
+/** «Oxirgi mijozlar» [P]: the organizations of the latest orders, newest first. */
+export const NEW_ORDER_RECENT_CUSTOMER_LIMIT = 4;
+
+export const newOrderCustomerMemberSchema = z.strictObject({
+  userId: idSchema,
+  fullName: z.string(),
+  phone: z.string().nullable(),
+});
+export type NewOrderCustomerMember = z.infer<typeof newOrderCustomerMemberSchema>;
+
+/** An organization that may get an order now, with its CURRENT members (whom it may be placed by). */
+export const newOrderCustomerSchema = z.strictObject({
+  organizationId: idSchema,
+  name: z.string(),
+  type: organizationTypeSchema,
+  label: organizationLabelSchema,
+  members: z.array(newOrderCustomerMemberSchema),
+});
+export type NewOrderCustomer = z.infer<typeof newOrderCustomerSchema>;
+
+export const newOrderCustomersResponseSchema = z.strictObject({
+  items: z.array(newOrderCustomerSchema).max(NEW_ORDER_CUSTOMER_LIMIT),
+  /** Not narrowed by the query: the chips above the search. */
+  recent: z.array(newOrderCustomerSchema).max(NEW_ORDER_RECENT_CUSTOMER_LIMIT),
+});
+export type NewOrderCustomersResponse = z.infer<typeof newOrderCustomersResponseSchema>;
+
+/** Step 2: what can be ordered for this organization, at ITS price tier. */
+export const newOrderCatalogQuerySchema = z.strictObject({ organizationId: idSchema });
+export type NewOrderCatalogQuery = z.output<typeof newOrderCatalogQuerySchema>;
+
+export const newOrderCatalogItemSchema = z.strictObject({
+  productId: idSchema,
+  productCode: z.string(),
+  name: z.string(),
+  /** The sheet's category (staff vocabulary); null without one. */
+  category: z.string().nullable(),
+  brand: z.string().nullable(),
+  imageUrl: z.string().nullable(),
+  imageLargeUrl: z.string().nullable(),
+  /** Plan FULL ("Bittada to'lash"), so'm, the organization's tier. */
+  unitPrice: amountSchema,
+  /** Plan DEFERRED ("Bo'lib to'lash"); null = the product has none, so DEFERRED is impossible. */
+  deferredUnitPrice: amountSchema.nullable(),
+  /**
+   * Free whole pieces (the stock page's "Mavjud"): a hint for the manager's warning only, never a
+   * limit [P]. Null = not tracked (a staff-added product) or unknown.
+   */
+  stock: z.int().nonnegative().nullable(),
+});
+export type NewOrderCatalogItem = z.infer<typeof newOrderCatalogItemSchema>;
+
+export const newOrderCatalogResponseSchema = z.strictObject({
+  organizationId: idSchema,
+  priceTier: priceTierSchema,
+  currency: currencySchema,
+  items: z.array(newOrderCatalogItemSchema),
+});
+export type NewOrderCatalogResponse = z.infer<typeof newOrderCatalogResponseSchema>;
+
+export const MAX_NEW_ORDER_LINES = 200;
+
+/** Step 4. Sent with an `Idempotency-Key` header: a retry returns the same order. */
+export const createStaffOrderRequestSchema = z.strictObject({
+  organizationId: idSchema,
+  /** The member the order is placed by (GROUP: the chosen one, PERSON: its only member). */
+  placedByUserId: idSchema,
+  /** Required: nothing is preselected. */
+  paymentPlan: paymentPlanSchema,
+  lines: z
+    .array(z.strictObject({ productId: idSchema, quantity: wholeQuantityStringSchema }))
+    .min(1)
+    .max(MAX_NEW_ORDER_LINES)
+    .refine((lines) => new Set(lines.map((l) => l.productId)).size === lines.length, {
+      message: 'A product can be ordered on one line only',
+    }),
+  /** «Izoh»: stored as the order's comment (`customerComment`); empty = none. */
+  comment: optionalCommentSchema,
+  /** The total the manager saw; a price that moved since refuses the order (CART_TOTAL_CHANGED). */
+  expectedTotalAmount: amountSchema,
+});
+export type CreateStaffOrderRequest = z.output<typeof createStaffOrderRequestSchema>;
+
 export const STAFF_ORDER_ROUTES = Object.freeze({
   listOrders: route('GET', '/staff/orders'),
+  createOrder: route('POST', '/staff/orders'),
+  listNewOrderCustomers: route('GET', '/staff/orders/new/customers'),
+  getNewOrderCatalog: route('GET', '/staff/orders/new/catalog'),
   countOrders: route('GET', '/staff/orders/counts'),
   getOrder: route('GET', '/staff/orders/:id'),
   getOrderTimeline: route('GET', '/staff/orders/:id/timeline'),

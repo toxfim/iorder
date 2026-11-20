@@ -65,7 +65,9 @@ const squash = (value: string | null | undefined): string =>
 const text = (selector: string): string =>
   squash(document.body.querySelector(selector)?.textContent);
 const rows = (): string[] =>
-  Array.from(document.body.querySelectorAll('tbody .dt__row')).map((r) => squash(r.textContent));
+  Array.from(document.body.querySelectorAll('[data-testid="order-row"]')).map((r) =>
+    squash(r.textContent),
+  );
 const buttonByText = (label: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll('button')).find((b) => squash(b.textContent) === label);
 const byLabel = (label: string): HTMLElement =>
@@ -81,54 +83,112 @@ const chooseMethod = async (method: 'CASH' | 'OFFICIAL' = 'CASH'): Promise<void>
   (document.body.querySelector(`[data-testid="payment-method-${method}"]`) as HTMLElement).click();
   await flushPromises();
 };
+// The manager's step sits in the page header: «Tasdiqlash» opens the approval dialog, which reads
+// the order and its supply plan and asks for the sale type.
+const openApproval = async (): Promise<void> => {
+  (document.body.querySelector('[data-testid="approve-button"]') as HTMLButtonElement).click();
+  await waitFor(() => expect(text('.modal__title')).toBe('Buyurtmani tasdiqlaysizmi?'));
+  await waitFor(() =>
+    expect(document.body.querySelector('[data-testid="payment-method-CASH"]')).not.toBeNull(),
+  );
+};
+const confirmApproval = (): void =>
+  (document.body.querySelector('[data-testid="approve-confirm"]') as HTMLButtonElement).click();
 const detailReady = async (head: string): Promise<void> => {
-  await waitFor(() => expect(text('.head__org')).toBe(head));
+  await waitFor(() => expect(text('.client__name')).toBe(head));
 };
 
 describe('orders list', () => {
-  it('lists every order, open ones by stage then newest id, closed last, with the total', async () => {
+  it('lists every order newest first with customer, contact, total, payment plan and status', async () => {
     await mountAt('manager', '/staff/orders');
     expect(text('.head__title')).toBe('Buyurtmalar');
-    expect(text('.head__info')).toBe(
-      "12 ta buyurtma · rad etilgan va bekor qilinganlarsiz jami 395 750 000 so'm",
-    );
     const list = rows();
     expect(list).toHaveLength(12);
     expect(list[0]).toContain('IO-10491');
+    expect(list[0]).toContain('Orion Mobile');
     expect(list[0]).toContain('Jasur Karimov');
-    expect(list[0]).toContain('19.10 · 09:12');
+    expect(list[0]).toContain('+998 90 351 2210');
+    expect(list[0]).toContain("23 570 000 so'm");
+    expect(list[0]).toContain("Bittada to'lash");
+    expect(list[0]).toContain('Menejerda');
     expect(list[1]).toContain('IO-10490');
     expect(list[2]).toContain('IO-10487');
   });
 
-  it('leaves rejected and cancelled orders out of the sum and hides their payment badge', async () => {
+  it('tags each row with the organization type, and the label only for roles that see money', async () => {
+    await mountAt('manager', '/staff/orders');
+    const first = document.body.querySelector('[data-testid="order-row"]');
+    expect(squash(first?.querySelector('[data-testid="org-type-tag"]')?.textContent)).toBe('Guruh');
+    // Orion Mobile is a partner in the fake.
+    expect(squash(first?.querySelector('[data-testid="org-label-tag"]')?.textContent)).toBe(
+      'Hamkor',
+    );
+    for (const w of wrappers.splice(0)) w.unmount();
+    // The warehouse reads orders on the order page (its list is the queue): type yes, label no.
+    await mountAt('warehouse', `/staff/orders/${orderId('IO-10484')}`);
+    await waitFor(() =>
+      expect(document.body.querySelector('[data-testid="org-type-tag"]')).not.toBeNull(),
+    );
+    expect(document.body.querySelector('[data-testid="org-label-tag"]')).toBeNull();
+  });
+
+  it('offers the quick approve on SUBMITTED rows only, and only to the manager', async () => {
+    await mountAt('manager', '/staff/orders');
+    const approvable = Array.from(document.body.querySelectorAll('[data-testid="order-row"]'))
+      .filter((r) => r.querySelector('[data-testid="row-approve"]'))
+      .map((r) => r.querySelector('.row-link')?.textContent?.trim());
+    expect(approvable).toEqual(['IO-10491', 'IO-10490', 'IO-10487']);
+    for (const w of wrappers.splice(0)) w.unmount();
+    await mountAt('accountant', '/staff/orders');
+    expect(document.body.querySelector('[data-testid="row-approve"]')).toBeNull();
+  });
+
+  it('approves from the row through the approval dialog; nothing happens before the confirm', async () => {
+    const { services } = await mountAt('manager', '/staff/orders?stage=SUBMITTED');
+    (document.body.querySelector('[data-testid="row-approve"]') as HTMLButtonElement).click();
+    await waitFor(() => expect(text('.modal__title')).toBe('Buyurtmani tasdiqlaysizmi?'));
+    await waitFor(() =>
+      expect(text('[data-testid="approve-summary"]')).toBe(
+        "IO-1049123 570 000 so'mOrion Mobile · Jasur KarimovBittada to'lash",
+      ),
+    );
+    expect(summaryByNumber(services, 'IO-10491')?.status).toBe('SUBMITTED');
+    await waitFor(() =>
+      expect(document.body.querySelector('[data-testid="payment-method-CASH"]')).not.toBeNull(),
+    );
+    await chooseMethod();
+    await waitFor(() =>
+      expect(
+        (
+          document.body.querySelector('[data-testid="approve-confirm"]') as HTMLElement
+        ).getAttribute('aria-disabled'),
+      ).not.toBe('true'),
+    );
+    (document.body.querySelector('[data-testid="approve-confirm"]') as HTMLButtonElement).click();
+    await waitFor(() =>
+      expect(summaryByNumber(services, 'IO-10491')?.status).toBe('MANAGER_APPROVED'),
+    );
+  });
+
+  it('shows no payment plan on rejected and cancelled rows', async () => {
     const { services } = await mountAt('manager', '/staff/orders');
     const rejected = summaryByNumber(services, 'IO-10487');
     if (!rejected) throw new Error('IO-10487 is missing');
-    expect(rejected.detail === 'FULL' && rejected.paymentStatus).toBe('UNPAID');
     await services.ordersStore.reject(rejected, 'Narx eskirgan');
     await flushPromises();
-    // IO-10487 (Click Store) is no longer counted; the count still lists every order
-    expect(text('.head__info')).toMatch(/^12 ta buyurtma · .* jami /);
-    const row = (id: string): Element | undefined =>
-      Array.from(document.body.querySelectorAll('tbody .dt__row')).find((r) =>
-        r.textContent?.includes(id),
+    const plan = (id: string): string => {
+      const row = Array.from(document.body.querySelectorAll('[data-testid="order-row"]')).find(
+        (r) => r.textContent?.includes(id),
       );
-    // the payment column is the fifth cell of a manager's row
-    const pay = (r: Element | undefined): string =>
-      squash(r?.querySelectorAll('td')[4]?.textContent);
-    expect(pay(row('IO-10487'))).toBe('');
-    expect(pay(row('IO-10491'))).not.toBe('');
-    const total = squash(text('.head__info').split('jami ')[1]);
-    expect(total).not.toBe("395 750 000 so'm");
+      return squash(row?.querySelector('[data-testid="order-plan"]')?.textContent);
+    };
+    await waitFor(() => expect(plan('IO-10487')).toBe(''));
+    expect(plan('IO-10491')).toBe("Bittada to'lash");
   });
 
-  it('filters from the URL query and keeps the count line in step', async () => {
+  it('filters from the URL query', async () => {
     const { router } = await mountAt('manager', '/staff/orders?stage=RELEASED&pay=PAID');
     expect(rows()).toHaveLength(2);
-    expect(text('.head__info')).toBe(
-      "2 ta buyurtma · rad etilgan va bekor qilinganlarsiz jami 73 420 000 so'm",
-    );
     await router.replace({ query: { period: 'debt' } });
     await flushPromises();
     expect(rows()).toHaveLength(1);
@@ -143,11 +203,11 @@ describe('orders list', () => {
     await router.replace({ query: { stage: 'CLOSED', pay: 'PAID' } });
     await flushPromises();
     expect(rows()).toHaveLength(0);
-    expect(text('.dt__empty')).toBe("Filtrga mos buyurtma yo'q");
+    expect(text('.empty')).toBe("Filtrga mos buyurtma yo'q");
   });
 
   it('clears the filters', async () => {
-    const { router } = await mountAt('manager', '/staff/orders?stage=RELEASED');
+    const { router } = await mountAt('manager', '/staff/orders?stage=CLOSED&pay=PAID');
     buttonByText('Filtrlarni tozalash')?.click();
     await flushPromises();
     expect(router.currentRoute.value.query).toEqual({});
@@ -156,7 +216,7 @@ describe('orders list', () => {
 
   it('rows are links to the order page; back returns to the list with its filters', async () => {
     const { router } = await mountAt('manager', '/staff/orders?stage=SUBMITTED');
-    const link = document.body.querySelector('a.dt__link') as HTMLAnchorElement;
+    const link = document.body.querySelector('a.row-link') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toBe(`/staff/orders/${orderId('IO-10491')}`);
     link.click();
     await waitFor(() => expect(router.currentRoute.value.name).toBe('staff-order'));
@@ -169,49 +229,20 @@ describe('orders list', () => {
     );
   });
 
-  it('shows one chip per applied filter with a result count; a chip removes only its filter', async () => {
-    const { router } = await mountAt('manager', '/staff/orders?stage=RELEASED&pay=PAID');
-    const chips = Array.from(document.body.querySelectorAll('.applied .chip'));
-    // the stage is the pressed tab, so only the sheet filters become chips
-    expect(chips.map((c) => squash(c.textContent))).toEqual(["To'lov: To'langan ×"]);
-    expect(text('.result-count')).toBe('2 ta natija');
-    (chips[0] as HTMLButtonElement).click();
-    await flushPromises();
-    expect(router.currentRoute.value.query).toEqual({ stage: 'RELEASED' });
-    expect(document.body.querySelectorAll('.applied .chip')).toHaveLength(0);
-  });
-
-  it('shows no chip bar without filters, and the waiting time only for orders still moving', async () => {
+  it('says how long ago every order was placed, in one unit, closed ones too', async () => {
     const { services } = await mountAt('manager', '/staff/orders');
-    expect(document.body.querySelector('.applied')).toBeNull();
-    const cell = (id: string): string => {
-      const row = Array.from(document.body.querySelectorAll('tbody .dt__row')).find((r) =>
-        r.textContent?.includes(id),
+    const when = (id: string): string => {
+      const row = Array.from(document.body.querySelectorAll('[data-testid="order-row"]')).find(
+        (r) => r.textContent?.includes(id),
       );
-      const cells = row?.querySelectorAll('td') ?? [];
-      return squash(cells[cells.length - 1]?.textContent);
+      return squash(row?.querySelector('[data-testid="order-when"]')?.textContent);
     };
-    expect(cell('IO-10491')).toMatch(/daqiqa|soat|kun/);
+    expect(when('IO-10491')).toMatch(/(daqiqa|soat|kun) oldin$/);
     const rejected = summaryByNumber(services, 'IO-10487');
     if (!rejected) throw new Error('IO-10487 is missing');
     await services.ordersStore.reject(rejected, 'Narx eskirgan');
-    await flushPromises();
-    // a rejected order has nothing to wait for
-    expect(cell('IO-10487')).toBe('—');
-  });
-
-  it('sorts the loaded rows by the total when its header is pressed', async () => {
-    await mountAt('manager', '/staff/orders');
-    const totalHeader = Array.from(document.body.querySelectorAll('thead th')).find((h) =>
-      h.textContent?.includes('Jami'),
-    ) as HTMLElement;
-    (totalHeader.querySelector('button') as HTMLButtonElement).click();
-    await flushPromises();
-    const totals = Array.from(document.body.querySelectorAll('tbody .dt__row')).map((r) => {
-      const cells = r.querySelectorAll('td');
-      return Number(squash(cells[5]?.textContent).replace(/\D/g, ''));
-    });
-    expect(totals).toEqual([...totals].sort((a, b) => a - b));
+    // a rejected order still says when it was placed: the design shows «x oldin» on every row
+    await waitFor(() => expect(when('IO-10487')).toMatch(/^\d+ (daqiqa|soat|kun) oldin$/));
   });
 
   it('shows the error and denied states', async () => {
@@ -225,25 +256,25 @@ describe('order page', () => {
     await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
     expect(text('.head__id')).toBe('IO-10491');
-    expect(text('.head__badges')).toBe("MenejerdaTo'lanmagan");
-    // v8 meta line: organization, who placed it, when, and how long it has been moving
-    expect(text('.head__meta')).toBe(
-      'Orion Mobile · joylagan Jasur Karimov · 19.10.2026 09:12 · yoshi 18 daqiqa',
-    );
-    // the delivery contact card holds the placer (also the shop owner) with the phone
-    expect(text('.contact')).toContain('Jasur Karimov');
-    expect(text('.contact')).toContain("Buyurtma bergan · Do'kon egasi");
-    expect(text('.contact')).toContain('+998 90 351 2210');
+    // the design's header: number, the read-only status pill, how long ago it was placed
+    expect(text('.head__badges')).toBe('Menejerda');
+    expect(text('[data-testid="order-age"]')).toBe('18 daqiqa oldin');
+    // the «Mijoz» card: the organization, then the placer (also the shop owner) with the phone
+    expect(text('.client__name')).toBe('Orion Mobile');
+    expect(text('.client')).toContain('Jasur Karimov');
+    expect(text('.client')).toContain("Buyurtma bergan · Do'kon egasi");
+    expect(text('.client')).toContain('+998 90 351 2210');
+    expect(text('.client')).toContain("Qo'ng'iroq qilish");
     expect(document.body.querySelector('.crumbs')).toBeNull();
     expect(document.body.querySelectorAll('a.back')).toHaveLength(1);
-    expect(
-      Array.from(document.body.querySelectorAll('.progress__dot')).map((b) =>
-        b.className.replace(/.*--/, ''),
-      ),
-    ).toEqual(['done', 'next', 'todo', 'todo', 'todo', 'todo']);
+    // the design has no stepper: the manager's view leaves it out, the step is in the header
+    expect(document.body.querySelector('.progress')).toBeNull();
+    expect(text('.hact')).toContain('Rad etish');
+    expect(text('.hact')).toContain('Tasdiqlash');
+    expect(document.body.querySelector('.panel--actions')).toBeNull();
     expect(document.body.querySelectorAll('.line')).toHaveLength(4);
     expect(text('.items__sub')).toBe('4 pozitsiya · 130 dona');
-    expect(text('.total')).toBe("Jami23 570 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi23 570 000 so'm");
     expect(text('.comment__text')).toBe('Iltimos, ertaga ertalab yetkazib bering.');
     const events = Array.from(document.body.querySelectorAll('.event'));
     expect(events).toHaveLength(1);
@@ -280,12 +311,13 @@ describe('order page', () => {
       Array.from(document.body.querySelectorAll('.progress__dot')).map((b) =>
         b.className.replace(/.*--/, ''),
       );
-    await mountAt('manager', `/staff/orders/${orderId('IO-10484')}`);
+    // the other roles keep the stepper (the manager's view follows the design and has none)
+    await mountAt('admin', `/staff/orders/${orderId('IO-10484')}`);
     await detailReady('Click Store');
     expect(barStates()).toEqual(['done', 'done', 'skipped', 'next', 'todo', 'todo']);
     expect(text('.progress')).toContain("BuxgalteriyaO'tkazib yuborildi");
     document.body.innerHTML = '';
-    await mountAt('manager', `/staff/orders/${orderId('IO-10477')}`);
+    await mountAt('admin', `/staff/orders/${orderId('IO-10477')}`);
     await detailReady('Mobile Center Samarqand');
     expect(barStates()).toEqual(['done', 'done', 'done', 'done', 'done', 'next']);
     expect(text('.progress')).not.toContain("O'tkazib");
@@ -309,7 +341,7 @@ describe('order page', () => {
     byLabel('Samsung Galaxy A15 4/128GB: oshirish').click();
     await flushPromises();
     expect(text('.items__sub')).toBe('4 pozitsiya · 132 dona');
-    expect(text('.total')).toBe("Jami26 950 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi26 950 000 so'm");
     expect(text('.draft')).toContain('Samsung Galaxy A15 4/128GB: 10 → 12 dona');
     expect(text('.draft__totals')).toBe("23 570 000 → 26 950 000, +3 380 000 so'm");
     expect(buttonByText('Saqlash')).toBeDefined();
@@ -370,11 +402,11 @@ describe('order page', () => {
     buttonByText('Ortga')?.click();
     await waitFor(() => expect(document.body.querySelector('.modal__title')).toBeNull());
     expect(document.body.querySelector('.draft')).toBeNull();
-    expect(text('.total')).toBe("Jami23 570 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi23 570 000 so'm");
     // yes: the clicked change is applied, and later −/+/× do not ask again
     byLabel('Samsung Galaxy A15 4/128GB: kamaytirish').click();
     await confirmItemEdit();
-    expect(text('.total')).toBe("Jami21 880 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi21 880 000 so'm");
     byLabel('Samsung Galaxy A15 4/128GB: oshirish').click();
     await flushPromises();
     byLabel('Samsung 25W zaryadlovchi: olib tashlash').click();
@@ -390,11 +422,11 @@ describe('order page', () => {
     await detailReady('Orion Mobile');
     byLabel('Samsung Galaxy A15 4/128GB: kamaytirish').click();
     await confirmItemEdit();
-    expect(text('.total')).toBe("Jami21 880 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi21 880 000 so'm");
     buttonByText('Bekor qilish')?.click();
     await flushPromises();
     expect(document.body.querySelector('.draft')).toBeNull();
-    expect(text('.total')).toBe("Jami23 570 000 so'm");
+    expect(text('.total')).toBe("Buyurtma summasi23 570 000 so'm");
     expect((await detailByNumber(services, 'IO-10491')).items[0]?.quantity).toBe('10');
     expect(document.body.querySelectorAll('.event')).toHaveLength(1);
   });
@@ -421,16 +453,21 @@ describe('order page', () => {
   it('does not ask when nothing is staged, and blocks approval until the draft is saved', async () => {
     const { router } = await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
-    await chooseMethod();
     byLabel('Samsung Galaxy A15 4/128GB: oshirish').click();
     await confirmItemEdit();
-    expect(isLocked(buttonByText('Tasdiqlash'))).toBe(true);
-    expect(text('[data-testid="approve-reason"]')).toBe(
+    const approve = document.body.querySelector('[data-testid="approve-button"]') as HTMLElement;
+    expect(isLocked(approve)).toBe(true);
+    expect(isLocked(document.body.querySelector('[data-testid="reject-button"]'))).toBe(true);
+    // a new order is refused, never cancelled: the header has no cancel (owner 2026-11-20)
+    expect(document.body.querySelector('[data-testid="header-cancel"]')).toBeNull();
+    // the button explains itself (tooltip, or a dialog on a tap) with the thing to do first
+    const reasons = document.getElementById(approve.getAttribute('aria-describedby') ?? '');
+    expect(reasons?.textContent).toContain(
       "Tarkibdagi o'zgarishlar saqlanmagan. Avval ularni saqlang yoki bekor qiling.",
     );
     buttonByText('Bekor qilish')?.click();
     await flushPromises();
-    expect(isLocked(buttonByText('Tasdiqlash'))).toBe(false);
+    expect(isLocked(approve)).toBe(false);
     await router.push('/staff/orders');
     expect(router.currentRoute.value.path).toBe('/staff/orders');
   });
@@ -462,13 +499,14 @@ describe('order page', () => {
   it('keeps approve locked until the manager picks a payment method; nothing is preselected', async () => {
     const { services } = await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
+    await openApproval();
     const radios = Array.from(
-      document.body.querySelectorAll<HTMLInputElement>('.actions [type="radio"]'),
+      document.body.querySelectorAll<HTMLInputElement>('.modal .method [type="radio"]'),
     );
     expect(radios.map((radio) => radio.checked)).toEqual([false, false]);
-    expect(text('.actions .method__options')).toBe('Naqd Official');
+    expect(text('.modal .method__options')).toBe('Naqd Official');
     const approve = document.body.querySelector(
-      '[data-testid="approve-button"]',
+      '[data-testid="approve-confirm"]',
     ) as HTMLButtonElement;
     expect(isLocked(approve)).toBe(true);
     approve.click();
@@ -476,7 +514,7 @@ describe('order page', () => {
     expect(summaryByNumber(services, 'IO-10491')?.status).toBe('SUBMITTED');
     await chooseMethod();
     expect(isLocked(approve)).toBe(false);
-    // before the approval there is no payment method card yet: the choice sits in the actions
+    // before the approval there is no payment method card yet: the choice sits in the dialog
     expect(document.body.querySelector('[data-testid="payment-method-card"]')).toBeNull();
   });
 
@@ -582,13 +620,13 @@ describe('order page', () => {
   it('approves, stays on the page and shows the new status and event; skip box skips accounting', async () => {
     const { services } = await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
+    await openApproval();
     await chooseMethod('OFFICIAL');
-    buttonByText('Tasdiqlash')?.click();
-    await waitFor(() => expect(text('.head__badges')).toBe("BuxgalteriyadaTo'lanmagan"));
+    confirmApproval();
+    await waitFor(() => expect(text('.head__badges')).toBe('Buxgalteriyada'));
     expect(summaryByNumber(services, 'IO-10491')?.status).toBe('MANAGER_APPROVED');
     expect(useToast().toast.value?.message).toBe('IO-10491 tasdiqlandi');
-    expect(buttonByText('Tasdiqlash')).toBeUndefined();
-    expect(text('[data-testid="approved-next"]')).toContain('buxgalteriyaga yuborildi');
+    expect(document.body.querySelector('[data-testid="approve-button"]')).toBeNull();
     expect(document.body.querySelectorAll('.event')).toHaveLength(2);
     await waitFor(() =>
       expect(text('[data-testid="timeline-payment-method"]')).toBe('Savdo turi: Official'),
@@ -598,32 +636,26 @@ describe('order page', () => {
   it('skips accounting when the manager ticks the box', async () => {
     const { services } = await mountAt('manager', `/staff/orders/${orderId('IO-10490')}`);
     await detailReady('Mobile Center Samarqand');
+    await openApproval();
     await chooseMethod();
     (document.body.querySelector('.skip__box') as HTMLInputElement).click();
     await flushPromises();
-    // The box says what it does, and the button names the consequence.
+    // The box says what it does.
     expect(text('.skip')).toContain("darhol omborga o'tadi");
-    const approveButton = document.body.querySelector(
-      '[data-testid="approve-button"]',
-    ) as HTMLButtonElement;
-    expect(squash(approveButton.textContent)).toBe('Tasdiqlash va buxgalteriyasiz davom etish');
-    approveButton.click();
+    confirmApproval();
     await flushPromises();
     // Skipping cannot be undone: the first tap only asks, nothing is sent yet.
     expect(summaryByNumber(services, 'IO-10490')?.status).toBe('SUBMITTED');
-    expect(text('[data-testid="skip-confirm"]')).toContain("Buni bekor qilib bo'lmaydi");
-    (document.body.querySelector('[data-testid="skip-confirm-back"]') as HTMLElement).click();
+    expect(text('[data-testid="approve-skip-confirm"]')).toContain("Buni bekor qilib bo'lmaydi");
+    buttonByText('Orqaga')?.click();
     await flushPromises();
-    expect(document.body.querySelector('[data-testid="skip-confirm"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="approve-skip-confirm"]')).toBeNull();
     expect(summaryByNumber(services, 'IO-10490')?.status).toBe('SUBMITTED');
-    (document.body.querySelector('[data-testid="approve-button"]') as HTMLElement).click();
+    confirmApproval();
     await flushPromises();
-    (document.body.querySelector('[data-testid="skip-confirm-yes"]') as HTMLElement).click();
+    confirmApproval();
     await waitFor(() =>
       expect(summaryByNumber(services, 'IO-10490')?.status).toBe('ACCOUNTING_CLEARED'),
-    );
-    await waitFor(() =>
-      expect(text('[data-testid="approved-next"]')).toContain('buxgalteriyasiz omborga'),
     );
     const skipped = summaryByNumber(services, 'IO-10490');
     expect(skipped?.detail === 'FULL' && skipped.accounting.mode).toBe('SKIPPED_BY_MANAGER');
@@ -635,8 +667,12 @@ describe('order page', () => {
     await detailReady('Click Store');
     buttonByText('Rad etish')?.click();
     await flushPromises();
+    // the design's question, with the grey summary of what is rejected
+    expect(text('.modal__title')).toBe('Buyurtmani rad etasizmi?');
+    expect(text('[data-testid="reason-summary"]')).toContain('IO-10487');
+    expect(text('[data-testid="reason-summary"]')).toContain('Click Store');
     const confirm = Array.from(document.body.querySelectorAll('.modal button')).find(
-      (b) => squash(b.textContent) === 'Rad etish',
+      (b) => squash(b.textContent) === 'Ha, rad etish',
     ) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     // Payment never blocks ordering (hard rule 11): no "debt" quick reason.
@@ -669,7 +705,7 @@ describe('order page', () => {
     textarea.dispatchEvent(new Event('input'));
     await flushPromises();
     const confirm = Array.from(document.body.querySelectorAll('.modal button')).find(
-      (b) => squash(b.textContent) === 'Bekor qilish',
+      (b) => squash(b.textContent) === 'Ha, bekor qilish',
     ) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     textarea.value = 'Mijoz bekor qildi';
@@ -681,7 +717,7 @@ describe('order page', () => {
 
   it('narrows the list with the text box and writes the text to the address', async () => {
     const { router } = await mountAt('manager', '/staff/orders');
-    const rows = (): number => document.body.querySelectorAll('tbody .dt__row').length;
+    const rows = (): number => document.body.querySelectorAll('[data-testid="order-row"]').length;
     const all = rows();
     expect(all).toBeGreaterThan(1);
     const box = document.body.querySelector('input[type="search"]') as HTMLInputElement;
@@ -713,38 +749,19 @@ describe('order page', () => {
     expect(text('.timeline')).toContain('Buyurtma yuborildi');
   });
 
-  it('keeps reject as the main negative action of a SUBMITTED order and files cancel under "Boshqa amallar"', async () => {
+  it('puts only reject and approve of a SUBMITTED order in the header; a reason stays required', async () => {
     const { services } = await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
-    expect(buttonByText('Rad etish')).toBeDefined();
-    expect(text('.actions')).toContain('Mijozga rad javobi yuboriladi');
-    // The reject hint belongs to the reject button only (F-02), the approve one has its own.
-    const rejectBlock = buttonByText('Rad etish')?.closest('.block');
-    expect(rejectBlock?.textContent).toContain('Mijozga rad javobi yuboriladi');
-    const approveBlock = document.body
-      .querySelector('[data-testid="approve-button"]')
-      ?.closest('.block');
-    expect(approveBlock?.textContent).not.toContain('rad javobi');
-    // Nothing is chosen yet, so the line under approve names the first thing to do.
-    expect(approveBlock?.textContent).toContain('Savdo turini tanlang: Naqd yoki Official.');
-    expect(approveBlock?.contains(document.body.querySelector('.skip__box'))).toBe(false);
-    // The skip box is above approve, never between approve and reject.
-    const skipBox = document.body.querySelector('.skip') as Element;
-    const approveEl = document.body.querySelector('[data-testid="approve-button"]') as Element;
-    expect(
-      skipBox.compareDocumentPosition(approveEl) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // cancel is not on the main row; it is one step away, with its own helper text
+    const header = document.body.querySelector('.head .hact') as HTMLElement;
+    // a new order is refused, never cancelled (owner 2026-11-20)
+    expect(squash(header.textContent)).toBe('Rad etish Tasdiqlash');
     expect(buttonByText('Buyurtmani bekor qilish')).toBeUndefined();
-    expect(text('.actions')).not.toContain('Buyurtma bekor qilindi (masalan');
-    buttonByText('Boshqa amallar')?.click();
+    // no big actions card for the manager's own step
+    expect(document.body.querySelector('.panel--actions')).toBeNull();
+    (document.body.querySelector('[data-testid="reject-button"]') as HTMLElement).click();
     await flushPromises();
-    expect(text('.actions')).toContain("Buyurtma bekor qilindi (masalan mijoz so'rovi bilan)");
-    buttonByText('Buyurtmani bekor qilish')?.click();
-    await flushPromises();
-    // the reason stays mandatory
     const confirm = Array.from(document.body.querySelectorAll('.modal button')).find(
-      (b) => squash(b.textContent) === 'Bekor qilish',
+      (b) => squash(b.textContent) === 'Ha, rad etish',
     ) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     const textarea = document.body.querySelector('textarea') as HTMLTextAreaElement;
@@ -752,7 +769,7 @@ describe('order page', () => {
     textarea.dispatchEvent(new Event('input'));
     await flushPromises();
     confirm.click();
-    await waitFor(() => expect(summaryByNumber(services, 'IO-10491')?.status).toBe('CANCELLED'));
+    await waitFor(() => expect(summaryByNumber(services, 'IO-10491')?.status).toBe('REJECTED'));
   });
 
   it('from MANAGER_APPROVED on only cancel exists, with no reject and no group', async () => {
@@ -773,7 +790,7 @@ describe('order page', () => {
   it('shows the derived payment badge but no manual payment action to the manager', async () => {
     await mountAt('manager', `/staff/orders/${orderId('IO-10491')}`);
     await detailReady('Orion Mobile');
-    expect(text('.head__badges')).toContain("To'lanmagan");
+    expect(text('[data-testid="payment-status"]')).toBe("To'lanmagan");
     expect(buttonByText("To'langan deb belgilash")).toBeUndefined();
     expect(buttonByText("To'lanmagan deb belgilash")).toBeUndefined();
     expect(document.body.querySelector('.pay__btn')).toBeNull();
@@ -827,21 +844,22 @@ describe('order page: real-contract behaviour', () => {
   it('tells the manager the order changed, re-reads it and offers the new step (409 ORDER_CHANGED)', async () => {
     const { services, orders } = await mountAt('manager', at('IO-10491'));
     await detailReady('Orion Mobile');
-    // a colleague approves the order after this page was loaded
+    await openApproval();
+    await chooseMethod();
+    // a colleague approves the order after the dialog read it
     const current = await orders.ordersApi.getOrder(orderId('IO-10491'));
     await orders.ordersApi.approve(current.id, {
       ...(await fifoPlanOf(orders.ordersApi, current.id)),
       paymentMethod: 'CASH',
       expectedRowVersion: current.rowVersion,
     });
-    await chooseMethod();
-    buttonByText('Tasdiqlash')?.click();
+    confirmApproval();
     await waitFor(() =>
       expect(useToast().toast.value?.message).toContain("Buyurtmani boshqa xodim o'zgartirgan"),
     );
     // the page reloaded what the server has: approved by the colleague, no approve button left
-    await waitFor(() => expect(text('.head__badges')).toBe("BuxgalteriyadaTo'lanmagan"));
-    expect(buttonByText('Tasdiqlash')).toBeUndefined();
+    await waitFor(() => expect(text('.head__badges')).toBe('Buxgalteriyada'));
+    expect(document.body.querySelector('[data-testid="approve-button"]')).toBeNull();
     // The kept queue was read again: the order is no longer waiting for the manager.
     await waitFor(() => expect(summaryByNumber(services, 'IO-10491')).toBeUndefined());
   });
@@ -851,8 +869,9 @@ describe('order page: real-contract behaviour', () => {
     await detailReady('Mobile Center Samarqand');
     const approve = vi.spyOn(orders.ordersApi, 'approve');
     const version = (await orders.ordersApi.getOrder(orderId('IO-10490'))).rowVersion;
+    await openApproval();
     await chooseMethod('OFFICIAL');
-    buttonByText('Tasdiqlash')?.click();
+    confirmApproval();
     await waitFor(() => expect(approve).toHaveBeenCalledTimes(1));
     expect(approve).toHaveBeenCalledWith(
       orderId('IO-10490'),
@@ -881,13 +900,15 @@ describe('order page: real-contract behaviour', () => {
     it('proposes the FIFO plan and sends it', async () => {
       const { orders } = await mountAt('manager', at('IO-10490'));
       await detailReady('Mobile Center Samarqand');
+      await openApproval();
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-mode"]')).not.toBeNull(),
       );
       expect(text('[data-testid="allocation-mode"]')).toContain('FIFO');
       const approve = vi.spyOn(orders.ordersApi, 'approve');
+      await openApproval();
       await chooseMethod();
-      buttonByText('Tasdiqlash')?.click();
+      confirmApproval();
       await waitFor(() => expect(approve).toHaveBeenCalledTimes(1));
       const sent = approve.mock.calls[0]?.[1];
       expect(sent?.allocationMode).toBe('FIFO');
@@ -897,6 +918,7 @@ describe('order page: real-contract behaviour', () => {
     it('on a changed plan stays on the step, says so, and one more click confirms', async () => {
       const { orders } = await mountAt('manager', at('IO-10490'));
       await detailReady('Mobile Center Samarqand');
+      await openApproval();
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-mode"]')).not.toBeNull(),
       );
@@ -904,12 +926,13 @@ describe('order page: real-contract behaviour', () => {
       const approve = vi
         .spyOn(orders.ordersApi, 'approve')
         .mockRejectedValueOnce(await conflict(orders, id, 'ALLOCATION_CHANGED', true));
+      await openApproval();
       await chooseMethod();
-      buttonByText('Tasdiqlash')?.click();
+      confirmApproval();
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-changed"]')).not.toBeNull(),
       );
-      buttonByText('Tasdiqlash')?.click();
+      confirmApproval();
       await waitFor(() => expect(approve).toHaveBeenCalledTimes(2));
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-plan"]')).toBeNull(),
@@ -919,19 +942,21 @@ describe('order page: real-contract behaviour', () => {
     it('on too little stock names it and locks the approval', async () => {
       const { orders } = await mountAt('manager', at('IO-10490'));
       await detailReady('Mobile Center Samarqand');
+      await openApproval();
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-mode"]')).not.toBeNull(),
       );
       vi.spyOn(orders.ordersApi, 'approve').mockRejectedValueOnce(
         await conflict(orders, orderId('IO-10490'), 'STOCK_INSUFFICIENT', false),
       );
+      await openApproval();
       await chooseMethod();
-      buttonByText('Tasdiqlash')?.click();
+      confirmApproval();
       await waitFor(() =>
         expect(document.body.querySelector('[data-testid="allocation-short"]')).not.toBeNull(),
       );
       await waitFor(() =>
-        expect(isLocked(document.body.querySelector('[data-testid="approve-button"]'))).toBe(true),
+        expect(isLocked(document.body.querySelector('[data-testid="approve-confirm"]'))).toBe(true),
       );
     });
 
@@ -987,7 +1012,7 @@ describe('order page: real-contract behaviour', () => {
     expect(document.body.querySelector('[data-testid="cash-sale-warning"]')).toBeNull();
     expect(document.body.querySelector('.pay__btn, .head__pay')).toBeNull();
     expect(text('.head__badges')).toBe('Omborda');
-    expect(document.body.querySelectorAll('.contact .person__call').length).toBeGreaterThan(0);
+    expect(document.body.querySelectorAll('.client .person__phone').length).toBeGreaterThan(0);
     // roles only in the history: no staff names, no accounting mode, no notification markers
     const history = text('.timeline');
     expect(history).toContain('Menejer');
@@ -1001,7 +1026,7 @@ describe('order page: real-contract behaviour', () => {
     await mountAt('driver', at('IO-10488'));
     await detailReady('Orion Mobile');
     expect(document.body.querySelector('.line__sum')).toBeNull();
-    expect(document.body.querySelectorAll('.contact .person__call').length).toBeGreaterThan(0);
+    expect(document.body.querySelectorAll('.client .person__phone').length).toBeGreaterThan(0);
     document.body.innerHTML = '';
     await mountAt('driver', at('IO-10491'));
     await waitFor(() => expect(text('[data-state="empty"]')).toContain('Buyurtma topilmadi'));
@@ -1013,8 +1038,9 @@ describe('order page: real-contract behaviour', () => {
     const real = orders.ordersApi.getTimeline.bind(orders.ordersApi);
     orders.ordersApi.getTimeline = () => Promise.reject(new Error('down'));
     // a change makes the page re-read the order and its timeline
+    await openApproval();
     await chooseMethod();
-    buttonByText('Tasdiqlash')?.click();
+    confirmApproval();
     await waitFor(() => expect(text('.timeline-box')).toContain("Tarixni yuklab bo'lmadi."));
     expect(text('.head__badges')).toContain('Buxgalteriyada');
     orders.ordersApi.getTimeline = real;

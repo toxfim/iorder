@@ -186,7 +186,8 @@ describe('home page (v1 "Bosh sahifa")', () => {
     const { services } = await mountHome();
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
-    expect(text('.modal__title')).toBe('IO-10487 · tasdiqlash');
+    expect(text('.modal__title')).toBe('Buyurtmani tasdiqlaysizmi?');
+    expect(text('[data-testid="approve-summary"]')).toContain('IO-10487');
     const body = text('.modal__panel');
     expect(body).toContain('Click Store');
     expect(body).toContain('Buyurtma bergan:');
@@ -197,7 +198,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     expect((document.body.querySelector('.skip__box') as HTMLInputElement).checked).toBe(false);
     expect(summaryByNumber(services, 'IO-10487')?.status).toBe('SUBMITTED');
     // Bekor qilish closes it without approving
-    dialogButton('Bekor qilish')?.click();
+    dialogButton("Yo'q, ortga")?.click();
     await flushPromises();
     expect(summaryByNumber(services, 'IO-10487')?.status).toBe('SUBMITTED');
   });
@@ -216,7 +217,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
     await chooseMethod();
-    dialogButton('Tasdiqlash')?.click();
+    dialogButton('Ha, tasdiqlash')?.click();
     await flushPromises();
     expect(useToast().toast.value?.message).toBe('IO-10487 tasdiqlandi');
     expect(useToast().toast.value?.onUndo).toBeUndefined();
@@ -232,7 +233,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     await flushPromises();
     (document.body.querySelector('.skip__box') as HTMLInputElement).click();
     await chooseMethod();
-    dialogButton('Tasdiqlash')?.click();
+    dialogButton('Ha, tasdiqlash')?.click();
     await flushPromises();
     // Skipping accounting cannot be undone: like the order page, it needs a second, deliberate tap.
     expect(summaryByNumber(services, 'IO-10487')?.status).toBe('SUBMITTED');
@@ -241,7 +242,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     await flushPromises();
     expect(document.body.querySelector('[data-testid="approve-skip-confirm"]')).toBeNull();
     expect(summaryByNumber(services, 'IO-10487')?.status).toBe('SUBMITTED');
-    dialogButton('Tasdiqlash')?.click();
+    dialogButton('Ha, tasdiqlash')?.click();
     await flushPromises();
     dialogButton('Ha, buxgalteriyasiz tasdiqlash')?.click();
     await flushPromises();
@@ -259,7 +260,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     const approve = vi.spyOn(orders.ordersApi, 'approve');
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
-    const confirm = dialogButton('Tasdiqlash') as HTMLButtonElement;
+    const confirm = dialogButton('Ha, tasdiqlash') as HTMLButtonElement;
     // nothing is preselected: the confirm stays locked until the manager picks one
     expect(
       Array.from(document.body.querySelectorAll<HTMLInputElement>('.modal [type="radio"]')).map(
@@ -270,14 +271,14 @@ describe('home page (v1 "Bosh sahifa")', () => {
     expect(text('.modal .method__hint')).toBe('Tasdiqlash uchun savdo turini tanlang');
     await chooseMethod('OFFICIAL');
     expect(isLocked(confirm)).toBe(false);
-    dialogButton('Bekor qilish')?.click();
+    dialogButton("Yo'q, ortga")?.click();
     await flushPromises();
     // a new opening starts empty again
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
-    expect(isLocked(dialogButton('Tasdiqlash'))).toBe(true);
+    expect(isLocked(dialogButton('Ha, tasdiqlash'))).toBe(true);
     await chooseMethod('OFFICIAL');
-    dialogButton('Tasdiqlash')?.click();
+    dialogButton('Ha, tasdiqlash')?.click();
     await flushPromises();
     expect(approve).toHaveBeenCalledWith(
       orderId('IO-10487'),
@@ -293,7 +294,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     const approve = vi.spyOn(orders.ordersApi, 'approve');
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
-    const confirm = dialogButton('Tasdiqlash') as HTMLButtonElement;
+    const confirm = dialogButton('Ha, tasdiqlash') as HTMLButtonElement;
     await waitFor(() =>
       expect(text('.modal [data-testid="approve-reason"]')).toBe(
         'Savdo turini tanlang: Naqd yoki Official.',
@@ -314,7 +315,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     (document.body.querySelector('[data-testid="blocked-ok"]') as HTMLElement).click();
     await waitFor(() => expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1));
     // The approval dialog is still there, with the order in it.
-    expect(dialogButton('Tasdiqlash')).toBeDefined();
+    expect(dialogButton('Ha, tasdiqlash')).toBeDefined();
   });
 
   it('ignores a second click on the confirm button while the approval is running', async () => {
@@ -332,7 +333,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
     await chooseMethod();
-    const confirm = dialogButton('Tasdiqlash') as HTMLButtonElement;
+    const confirm = dialogButton('Ha, tasdiqlash') as HTMLButtonElement;
     confirm.click();
     await flushPromises();
     expect(isLocked(confirm)).toBe(true);
@@ -373,7 +374,7 @@ describe('home page (v1 "Bosh sahifa")', () => {
     buttonByText('Tasdiqlash')?.click();
     await flushPromises();
     await chooseMethod();
-    dialogButton('Tasdiqlash')?.click();
+    dialogButton('Ha, tasdiqlash')?.click();
     await flushPromises();
     expect(useToast().toast.value?.message).toContain("Buyurtmani boshqa xodim o'zgartirgan");
     // The queue is read again: the order approved elsewhere is no longer in it.

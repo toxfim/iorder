@@ -22,8 +22,10 @@ const props = withDefaults(
     /** Categories of another list that stay in the menu (with a count of 0 here). */
     alsoKnown?: readonly string[];
     alsoUncategorized?: boolean;
+    /** A visible name before the value ("Kategoriya Hammasi"), in place of the filter icon. */
+    prefix?: string;
   }>(),
-  { alsoKnown: () => [], alsoUncategorized: false },
+  { alsoKnown: () => [], alsoUncategorized: false, prefix: undefined },
 );
 const emit = defineEmits<{ 'update:modelValue': [id: string] }>();
 
@@ -63,7 +65,8 @@ const shown = computed<CategoryOption[]>(() =>
 const selected = computed(() => props.modelValue !== CATEGORY_ALL);
 const currentLabel = computed(
   () =>
-    options.value.find((option) => option.id === props.modelValue)?.label ?? allOption.value.label,
+    options.value.find((option) => option.id === props.modelValue)?.label ??
+    (props.prefix ? t('staffCost.categories.all') : allOption.value.label),
 );
 const withProducts = computed(() => options.value.filter((option) => option.count > 0).length);
 
@@ -223,7 +226,8 @@ onBeforeUnmount(() => {
         @click="toggle"
         @keydown="onTriggerKey"
       >
-        <StaffIcon name="filter" :size="14" class="catdd__icon" />
+        <span v-if="prefix" class="catdd__k" aria-hidden="true">{{ prefix }}</span>
+        <StaffIcon v-else name="filter" :size="14" class="catdd__icon" />
         <span class="catdd__value">{{ currentLabel }}</span>
         <StaffIcon v-if="!selected" name="down" :size="13" class="catdd__chevron" />
       </button>
@@ -331,6 +335,12 @@ onBeforeUnmount(() => {
 
 .catdd--on .catdd__field {
   background: var(--acc-bg);
+}
+
+.catdd__k {
+  flex: none;
+  color: var(--t2);
+  font-weight: 400;
 }
 
 .catdd__trigger {

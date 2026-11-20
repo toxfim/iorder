@@ -11,10 +11,15 @@ import {
   NotFoundError,
 } from '../../common/errors/domain-errors.js';
 import type { Prisma } from '../../generated/prisma/client.js';
-import { orderablePieces } from './orderable-stock.js';
+import { isSoldOutInSheet, orderablePieces } from './orderable-stock.js';
 import { SupplyAllocationService } from './supply-allocation/supply-allocation.service.js';
 import { AuditService, diffFields, type AuditChanges, type AuditValue } from '../audit/index.js';
-import { CatalogService, type ProductView, type SheetMatch } from '../catalog/index.js';
+import {
+  BrandService,
+  CatalogService,
+  type ProductView,
+  type SheetMatch,
+} from '../catalog/index.js';
 import { OrganizationsService } from '../organizations/index.js';
 import {
   CURRENCY,
@@ -31,6 +36,7 @@ import { PricingRepository } from './pricing.repository.js';
 import type {
   ItemPrices,
   ItemView,
+  LastPriceChange,
   PriceHistoryEntry,
   PriceListView,
   PricedProduct,
@@ -59,6 +65,7 @@ export class PricingService {
     private readonly usdRate: UsdRateService,
     private readonly holds: SupplyAllocationService,
     private readonly organizations: OrganizationsService,
+    private readonly brands: BrandService,
   ) {}
 
   // -------------------------------------------------------------------------------------
@@ -89,6 +96,40 @@ export class PricingService {
       priceTier: tier,
       items: inUzs(active.map((item) => productInTier(item, tier))),
     };
+  }
+
+  /**
+   * What the customer price list SHOWS (the catalog and the home page): `getCurrentForCustomer`
+   * without the sheet products whose sheet stock is zero [C, owner 2026-11-19, isSoldOutInSheet].
+   * The cart keeps reading the full list, so a line that ran out still has its prices and the
+   * STOCK_EXCEEDED problem rather than turning into an unknown product.
+   */
+  async getCatalogForCustomer(actor: Actor): Promise<PriceListView> {
+    const list = await this.getCurrentForCustomer(actor);
+    return { ...list, items: await this.withoutSoldOutInSheet(list.items) };
+  }
+
+  /**
+   * For other modules (the manager's new order [C, owner 2026-11-20]): exactly what this
+   * organization's own customer catalog shows, at ITS tier (Alif: only the products with an Alif
+   * price), without the sheet products whose sheet stock is zero (isSoldOutInSheet). The order is
+   * priced from this same list, so nothing is offered that the order would not take. Not an
+   * endpoint: the caller has authorized; the result is staff-mapped by the caller.
+   */
+  async getCatalogForOrganization(organizationId: string): Promise<PriceListView> {
+    const tier = await this.organizations.findPriceTier(organizationId);
+    const list = await this.loadCurrentPublished();
+    const active = list.items.filter((i) => i.product.isActive && offeredInTier(i, tier));
+    const items = inUzs(active.map((item) => productInTier(item, tier)));
+    return { ...list, priceTier: tier, items: await this.withoutSoldOutInSheet(items) };
+  }
+
+  /** One stock read for the whole list, whatever its size. */
+  private async withoutSoldOutInSheet<T extends PricedProduct>(items: readonly T[]): Promise<T[]> {
+    const tracked = items.filter((i) => !i.product.codeGenerated).map((i) => i.product.id);
+    if (tracked.length === 0) return [...items];
+    const sheet = await this.catalog.getStockQuantities(tracked);
+    return items.filter((i) => !isSoldOutInSheet(i.product, sheet.get(i.product.id)));
   }
 
   /**
@@ -138,18 +179,18 @@ export class PricingService {
    * bot's Excel export). NOT an endpoint: the caller must have authorized the request, and must
    * map the result with the customer mapper. Only the PUBLISHED version, active products only.
    * Every price in USD (the Excel file's columns); an older UZS item is converted with the rate.
+   * Like the customer catalog, it leaves out sheet products whose sheet stock is zero
+   * [C, owner 2026-11-19]; a tier left with nothing is then not posted (price-list-post).
    */
   async getCurrentForExport(tier: PriceTier = 'STANDARD'): Promise<PriceListView> {
     const list = await this.loadCurrentPublished();
+    const offered = list.items
+      .filter((i) => i.product.isActive && offeredInTier(i, tier))
+      .map((item) => productInTier(item, tier));
     return {
       ...list,
       priceTier: tier,
-      items: inUsd(
-        list.items
-          .filter((i) => i.product.isActive && offeredInTier(i, tier))
-          .map((item) => productInTier(item, tier)),
-        list.usdRate,
-      ),
+      items: inUsd(await this.withoutSoldOutInSheet(offered), list.usdRate),
     };
   }
 
@@ -203,6 +244,39 @@ export class PricingService {
   sheetMatches(list: PriceListView): Promise<Map<string, SheetMatch>> {
     return this.catalog.findSheetMatches(list.items.map((item) => item.product));
   }
+
+  /**
+   * For the staff list DTO: each product's brand by the price list file's rule (staff choice, else
+   * the brand finder); two queries for the whole list.
+   */
+  async brandNames(list: PriceListView): Promise<Map<string, string | null>> {
+    const brands = await this.brands.resolveBrands(list.items.map((item) => item.product));
+    return new Map([...brands].map(([productId, brand]) => [productId, brand?.name ?? null]));
+  }
+
+  /**
+   * For the staff list DTO: when each product of the version's list last changed. The query reads
+   * the whole price history, but its answer for one version never changes (published versions are
+   * immutable and later ones are left out), so it runs once per published version and process.
+   */
+  lastPriceChanges(actor: Actor, version: { id: string }): Promise<Map<string, LastPriceChange>> {
+    this.assertMayBrowse(actor);
+    this.assertIsStaff(actor);
+    if (this.lastChangesCache?.versionId !== version.id) {
+      const changes = this.repository.findLastPriceChanges(version.id);
+      this.lastChangesCache = { versionId: version.id, changes };
+      // A failed read is not kept: the next request asks again.
+      changes.catch(() => {
+        if (this.lastChangesCache?.changes === changes) this.lastChangesCache = null;
+      });
+    }
+    return this.lastChangesCache.changes;
+  }
+
+  private lastChangesCache: {
+    versionId: string;
+    changes: Promise<Map<string, LastPriceChange>>;
+  } | null = null;
 
   /** The staff price list read check (any staff role that may browse), for the Excel download. */
   assertMayReadStaffList(actor: Actor): void {

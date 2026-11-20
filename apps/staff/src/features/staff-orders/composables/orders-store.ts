@@ -2,6 +2,7 @@ import type { PlanChoice } from '../domain/allocation-plan';
 import { computed, ref, shallowRef, type ComputedRef, type Ref } from 'vue';
 import type { OrderStatus, PaymentPlan } from '@iorder/shared';
 import type {
+  CreateStaffOrderRequest,
   PaymentMethod,
   StaffOrder,
   StaffOrderListQuery,
@@ -10,6 +11,7 @@ import type {
 import type { ViewState } from '@core/composables/use-async-view';
 import { PermissionDeniedError } from '@core/lib/api-errors';
 import type { StaffOrdersApi } from '../api/staff-orders-api';
+import { resetNewOrderDraft } from './new-order-draft';
 import {
   compareOldestFirst,
   isAwaitingManager,
@@ -97,6 +99,8 @@ export interface OrdersStore {
   release: (order: OrderRef, driverUserId: string, comment?: string) => Promise<StaffOrder>;
   deliver: (order: OrderRef, comment?: string) => Promise<StaffOrder>;
   markGoodsReturned: (order: OrderRef) => Promise<StaffOrder>;
+  /** The manager's new order on a customer's behalf [C, owner 2026-11-20]; it joins the lists. */
+  create: (request: CreateStaffOrderRequest, idempotencyKey: string) => Promise<StaffOrder>;
 }
 
 /**
@@ -173,6 +177,8 @@ export function createOrdersStore(
   }
 
   function reset(): void {
+    // The manager's new order being put together is this person's too.
+    resetNewOrderDraft();
     run += 1;
     loadRun += 1;
     base = NOTHING;
@@ -264,5 +270,6 @@ export function createOrdersStore(
     deliver: (order, comment) =>
       mutate(api.deliver(order.id, { ...optionalComment(comment), ...withVersion(order) })),
     markGoodsReturned: (order) => mutate(api.markGoodsReturned(order.id, withVersion(order))),
+    create: (request, idempotencyKey) => mutate(api.createOrder(request, idempotencyKey)),
   };
 }

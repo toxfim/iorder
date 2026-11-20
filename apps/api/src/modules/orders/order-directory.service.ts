@@ -1,4 +1,4 @@
-import type { StaffRole } from '@iorder/shared';
+import type { OrganizationLabel, OrganizationType, StaffRole } from '@iorder/shared';
 import { Injectable } from '@nestjs/common';
 import type { Actor } from '../../common/auth/actor.js';
 import { IdentityService } from '../identity/index.js';
@@ -52,6 +52,16 @@ export class OrderDirectory {
   /** Staff only; a customer is never shown organization names other than their own. */
   organizationName(organizationId: string): string {
     return this.organizations.get(organizationId)?.name ?? '';
+  }
+
+  /** Staff only. The fallback only keeps the type honest: an order's organization always exists. */
+  organizationType(organizationId: string): OrganizationType {
+    return this.organizations.get(organizationId)?.type ?? 'GROUP';
+  }
+
+  /** Staff only; the mapper sends it to the roles that see money. Same fallback as above. */
+  organizationLabel(organizationId: string): OrganizationLabel {
+    return this.organizations.get(organizationId)?.label ?? 'STANDARD';
   }
 
   /** Null unless the actor's role gets it (manager, admin, warehouse, driver). */

@@ -13,6 +13,11 @@ import {
   SheetSyncQueue,
   UnavailableSheetSyncQueue,
 } from './sheet-sync-queue.js';
+import {
+  ProductCodeSelection,
+  SELECTED_PRODUCT_CODES,
+  SheetRowSelection,
+} from './product-code-selection.js';
 import { SheetSyncRunController } from './sheet-sync-run.controller.js';
 import { SheetSyncRunRepository } from './sheet-sync-run.repository.js';
 import { SheetSyncRunService } from './sheet-sync-run.service.js';
@@ -39,6 +44,8 @@ import { SheetsSyncService } from './sheets-sync.service.js';
           : new UnavailableSheetSyncQueue(),
       inject: [APP_ENV],
     },
+    // Which rows are read: the owner's «Товар_ID» list (data-model §6.4). Tests pass their own.
+    { provide: SheetRowSelection, useValue: new ProductCodeSelection(SELECTED_PRODUCT_CODES) },
     SheetSyncRunRepository,
     SheetSyncRunService,
     SheetsSyncService,

@@ -26,6 +26,13 @@ export function createOrdersRoute(page: StaffPage): RouteRecordRaw {
         component: () => import('@/features/staff-orders/components/OrdersPage.vue'),
         meta: { titleKey: page.labelKey },
       },
+      // The manager's new order on a customer's behalf [C, owner 2026-11-20]; before `:orderId`.
+      {
+        path: 'new',
+        name: 'staff-new-order',
+        component: () => import('@/features/staff-orders/components/NewOrderPage.vue'),
+        meta: { staffRoles: ['MANAGER'], titleKey: page.labelKey },
+      },
       {
         path: ':orderId',
         name: 'staff-order',

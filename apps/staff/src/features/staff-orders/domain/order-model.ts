@@ -24,13 +24,15 @@ export const isFullDetail = (order: StaffOrder): order is FullOrderDetail =>
 
 /** The list entry of a detail the server just returned (after an action). */
 export function summaryOf(order: StaffOrder): StaffOrderSummary {
-  const { id, orderNumber, organizationId, organizationName, status, itemCount } = order;
+  const { id, orderNumber, organizationId, organizationName, organizationType } = order;
+  const { status, itemCount } = order;
   const { submittedAt, updatedAt, rowVersion, driver, goodsReturn, goodsReturnedAt } = order;
   const base = {
     id,
     orderNumber,
     organizationId,
     organizationName,
+    organizationType,
     status,
     itemCount,
     submittedAt,
@@ -44,6 +46,7 @@ export function summaryOf(order: StaffOrder): StaffOrderSummary {
   return {
     ...base,
     detail: 'FULL',
+    organizationLabel: order.organizationLabel,
     paymentStatus: order.paymentStatus,
     paymentPlan: order.paymentPlan,
     totalAmount: order.totalAmount,

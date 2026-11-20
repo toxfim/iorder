@@ -3,23 +3,25 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { useServices } from '@/app/services';
-import AppBadge from '@core/components/ui/AppBadge.vue';
 import AppButton from '@core/components/ui/AppButton.vue';
-import DataTable from '@/components/ui/DataTable.vue';
-import FilterPanel from '@/components/ui/FilterPanel.vue';
 import StaffIcon from '@/components/ui/StaffIcon.vue';
-import type { DataTableColumn } from '@/components/ui/data-table';
-import OrdersFilterSheet from './OrdersFilterSheet.vue';
-import OrdersStatusTabs from './OrdersStatusTabs.vue';
 import SearchField from '@core/components/ui/SearchField.vue';
 import StateView from '@core/components/ui/StateView.vue';
 import { useInfiniteScroll } from '@core/composables/use-infinite-scroll';
-import { useFormat } from '@core/i18n/use-format';
-import { compareMoney } from '@core/lib/money';
+import type { DropdownOption } from '@/components/ui/AppDropdown.vue';
+import { useMediaQuery } from '@/composables/use-media-query';
+import type { NewOrderCustomer, NewOrderCustomerMember } from '@iorder/shared/staff-orders';
+import ApproveOrderDialog from './ApproveOrderDialog.vue';
+import NewOrderCustomerDialog from './NewOrderCustomerDialog.vue';
+import { useNewOrderDraft } from '../composables/new-order-draft';
+import OrdersFilterBar from './OrdersFilterBar.vue';
+import OrdersList from './OrdersList.vue';
+import OrdersStatusTabs from './OrdersStatusTabs.vue';
 import { rememberedListQuery } from '../composables/orders-list-memory';
-import { useOrderAge } from '../composables/use-order-age';
+import { useAllocationPlan } from '../composables/use-allocation-plan';
+import { useOrderActions } from '../composables/use-order-actions';
 import { usePagedOrders } from '../composables/use-paged-orders';
-import { hasValidTotal } from '../domain/order-sort';
+import type { PlanChoice } from '../domain/allocation-plan';
 import {
   hasOrderFilters,
   NO_ORDER_FILTERS,
@@ -28,46 +30,51 @@ import {
   ownStageFor,
   parseOrderFilters,
   secondaryFilterCount,
-  stageStatuses,
   stageTabCounts,
-  totalsOf,
   type OrderFilters,
   type StageFilter,
 } from '../domain/order-filters';
 import {
-  FULFILLMENT_STAGES,
-  isClosedWithoutDelivery,
-  isFullSummary,
-  stageIndex,
-  totalOf,
-  type OrderSummary,
+  type FullOrderDetail,
+  type FullOrderSummary,
+  type PaymentMethod,
 } from '../domain/order-model';
-import { paymentTone, stageTone } from '../domain/order-presentation';
-import PersonName from '@/features/people/components/PersonName.vue';
 
+// «Buyurtmalar» (approved design 2026-11-20, 1440 / 768 / 390): search, "Filtrlar" with an inline
+// row of lists, the status pills, then a table (cards on a phone). A SUBMITTED row offers the
+// manager a quick "Tasdiqlash": it opens the approval dialog, which still asks for the supply plan
+// and the sale type (Savdo turi) and offers the accounting skip, exactly as the order page does.
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
-const { ordersApi, ordersStore, clock, currentUser } = useServices();
-const { formatMoney, formatShortDateTime } = useFormat();
-const { ageText, ageMinutes } = useOrderAge(clock);
+const { ordersApi, ordersStore, currentUser } = useServices();
 
-const filters = computed(() => parseOrderFilters(route.query));
+// The roles that see money (the same set as the order actions' `seesMoney`). Only a UI hint: the
+// server refuses the money filters to the others and sends them no money fields.
+const MONEY_ROLES: readonly string[] = ['MANAGER', 'ADMIN', 'ACCOUNTANT', 'PURCHASING_MANAGER'];
+const seesMoney = computed(() =>
+  (currentUser.user.value?.staffRoles ?? []).some((role) => MONEY_ROLES.includes(role)),
+);
+// A pasted link with a money filter (payment, plan, the debt period) opens the plain list for the
+// warehouse or the driver instead of a refusal of the whole list.
+const filters = computed(() => {
+  const parsed = parseOrderFilters(route.query);
+  if (seesMoney.value) return parsed;
+  return {
+    ...parsed,
+    payment: null,
+    plan: null,
+    period: parsed.period === 'debt' ? null : parsed.period,
+  };
+});
 // The order page links back with these filters.
 watch(filters, (value) => (rememberedListQuery.value = orderFiltersToQuery(value)), {
   immediate: true,
 });
-// The server filters and pages (newest first); the counts over the same filters give the tabs,
-// the count and the sum, which the loaded pages alone could not.
+// The server filters and pages (newest first); the counts over the same filters give the tabs.
 const request = computed(() => orderListRequest(filters.value));
 const paged = usePagedOrders(ordersApi, () => request.value, { changes: ordersStore.revision });
 const list = paged.orders;
-const totals = computed(() =>
-  totalsOf(
-    paged.counts.value,
-    stageStatuses(filters.value.stage ?? 'all').filter((s) => request.value.countable.includes(s)),
-  ),
-);
 const listEnd = ref<HTMLElement | null>(null);
 useInfiniteScroll(listEnd, () => paged.loadMore());
 
@@ -102,143 +109,122 @@ const stageValue = computed(() => filters.value.stage ?? 'all');
 const ownStage = computed(() => ownStageFor(currentUser.user.value?.staffRoles ?? []));
 const tabCounts = computed(() => stageTabCounts(paged.counts.value, request.value.countable));
 
+// On a phone only three pills fit on one row (the design's 390 screen): the other statuses move
+// into "Filtrlar → Holat". The tablet keeps every pill in one row that scrolls sideways.
+const wide = useMediaQuery('(min-width: 600px)', true);
+const COMPACT_TABS = 3;
+const stageLabel = (value: StageFilter | 'all'): string =>
+  value === 'all'
+    ? t('orders.filters.all')
+    : value === 'CLOSED'
+      ? t('orders.filters.closed')
+      : t(`orders.stages.${value}`);
+const stageOptions = computed<DropdownOption[] | null>(() =>
+  wide.value
+    ? null
+    : tabCounts.value.map((tab) => ({
+        value: tab.value,
+        label: stageLabel(tab.value),
+        count: tab.count,
+      })),
+);
+
 const pickStage = (value: string): void =>
   setFilters({ ...filters.value, stage: value === 'all' ? null : (value as StageFilter) });
 
-// Payment and period sit in one "Filters" sheet; the button shows how many are on.
-const sheetOpen = ref(false);
+// Payment and period sit in the row under "Filtrlar"; the button shows how many are on. A link
+// that arrives with one of them set opens the row, so the filter in force is visible.
 const secondaryCount = computed(() => secondaryFilterCount(filters.value));
-const resetSecondary = (): void => setFilters({ ...filters.value, payment: null, period: null });
-
-interface Chip {
-  readonly key: keyof OrderFilters;
-  readonly label: string;
-}
-// A chip per applied sheet filter. The stage is the pressed tab and the text is in the search
-// box, so they are not repeated here; "Clear all" still resets everything.
-const chips = computed<Chip[]>(() => {
-  const f = filters.value;
-  const out: Chip[] = [];
-  if (f.payment)
-    out.push({
-      key: 'payment',
-      label: `${t('orders.filters.payment')}: ${t(`orders.payment.${f.payment}`)}`,
-    });
-  if (f.period)
-    out.push({
-      key: 'period',
-      label: `${t('orders.filters.period')}: ${t(`orders.filters.${f.period}`)}`,
-    });
-  return out;
+// On a narrow screen a status without its own pill is shown in the open "Holat" list.
+const stageHidden = computed(() => {
+  if (wide.value || filters.value.stage === null) return false;
+  const own = ownStage.value;
+  const shown = ['all', ...(own ? [own] : [])].concat(
+    tabCounts.value.map((tab) => tab.value).filter((v) => v !== 'all' && v !== own),
+  );
+  return !shown.slice(0, COMPACT_TABS).includes(filters.value.stage);
 });
-const dropFilter = (key: keyof OrderFilters): void => setFilters({ ...filters.value, [key]: null });
-const resultText = computed(() =>
-  t('table.resultCount', { count: totals.value.count }, totals.value.count),
-);
+const filtersOpen = ref(secondaryCount.value > 0 || stageHidden.value);
+watch([secondaryCount, stageHidden], ([count, hidden]) => {
+  if (count > 0 || hidden) filtersOpen.value = true;
+});
 
-// The server's DTO decides what exists: a warehouse or driver list carries no money or payment
-// fields at all, so those columns are simply not drawn (no role check in the client).
-const hasMoney = computed(() => list.value.some(isFullSummary));
-const stageRank = (order: OrderSummary): number => {
-  const index = stageIndex(order.status);
-  return index === -1 ? FULFILLMENT_STAGES.length : index;
-};
-
-// Column order of the v8 list: number, customer, status, placed by, payment, total, lines,
-// submitted, age.
-const columns = computed<DataTableColumn<OrderSummary>[]>(() => [
-  {
-    key: 'number',
-    label: t('orders.columns.number'),
-    width: '110px',
-    text: (o) => o.orderNumber,
-    compare: (a, b) => (a.orderNumber < b.orderNumber ? -1 : a.orderNumber > b.orderNumber ? 1 : 0),
-  },
-  {
-    key: 'organization',
-    label: t('orders.columns.organization'),
-    truncate: true,
-    minWidth: '130px',
-    text: (o) => o.organizationName,
-    compare: (a, b) => a.organizationName.localeCompare(b.organizationName),
-  },
-  {
-    key: 'stage',
-    label: t('orders.columns.stage'),
-    width: '150px',
-    text: (o) => t(`orders.stages.${o.status}`),
-    compare: (a, b) => stageRank(a) - stageRank(b),
-  },
-  {
-    key: 'placedBy',
-    label: t('orders.columns.placedBy'),
-    truncate: true,
-    minWidth: '120px',
-    hidden: !hasMoney.value,
-    text: (o) => (isFullSummary(o) ? o.placedBy.fullName : ''),
-  },
-  {
-    key: 'payment',
-    label: t('orders.columns.payment'),
-    width: '130px',
-    hidden: !hasMoney.value,
-    // Empty for a closed order, so the slot falling back to this text shows nothing either.
-    text: (o) =>
-      isFullSummary(o) && !isClosedWithoutDelivery(o.status)
-        ? t(`orders.payment.${o.paymentStatus}`)
-        : '',
-  },
-  {
-    key: 'total',
-    label: t('orders.columns.total', { currency: t('common.currency') }),
-    align: 'end',
-    width: '130px',
-    hidden: !hasMoney.value,
-    // The currency is in the header, so the cell carries the figure only (v8).
-    text: (o) => {
-      const total = totalOf(o);
-      return total === null ? '' : formatMoney(total);
-    },
-    hasSortValue: (o) => hasValidTotal(totalOf(o)),
-    compare: (a, b) => compareMoney(totalOf(a) ?? '0', totalOf(b) ?? '0'),
-  },
-  {
-    key: 'items',
-    label: t('orders.columns.items'),
-    align: 'end',
-    width: '72px',
-    text: (o) => String(o.itemCount),
-    compare: (a, b) => a.itemCount - b.itemCount,
-  },
-  {
-    key: 'submitted',
-    label: t('orders.columns.submitted'),
-    width: '130px',
-    text: (o) => formatShortDateTime(o.submittedAt),
-    hasSortValue: (o) => Number.isFinite(Date.parse(o.submittedAt)),
-    compare: (a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt),
-  },
-  {
-    key: 'age',
-    label: t('orders.columns.age'),
-    hint: t('orders.columns.ageHint'),
-    width: '130px',
-    text: (o) => ageText(o),
-    // Finished, closed and invalid ones have no age: they sort last in both directions.
-    hasSortValue: (o) => ageMinutes(o) >= 0,
-    compare: (a, b) => ageMinutes(a) - ageMinutes(b),
-  },
-]);
-
-const footer = computed(() =>
-  t(
-    hasMoney.value ? 'orders.page.footerMoney' : 'orders.page.footer',
-    { count: totals.value.count, currency: t('common.currency') },
-    totals.value.count,
-  ),
-);
-
+// By role, not by the rows: a filtered list that came back empty still shows the filters that
+// emptied it, so each can be changed on its own.
+const hasMoney = seesMoney;
 const pageState = computed(() => (paged.state.value === 'empty' ? 'ready' : paged.state.value));
+
+// --- the quick approval of a SUBMITTED row (the manager's step, lifecycle §3) ------------------
+
+let stockRefused = false;
+const approvalPlan = useAllocationPlan();
+const actions = useOrderActions({
+  // A refusal over stock keeps the dialog open with the fresh plan: one click from approved.
+  onAllocationConflict: (caught) => {
+    stockRefused = approvalPlan.absorbConflict(caught);
+    return stockRefused;
+  },
+});
+const canApprove = computed(() => actions.permissions().canDecide);
+const approveOpen = ref(false);
+// Kept after the dialog closes so its text does not blank out during the exit animation.
+const approving = ref<FullOrderSummary | null>(null);
+const approveBusy = ref(false);
+
+function askApprove(order: FullOrderSummary): void {
+  approving.value = order;
+  approveOpen.value = true;
+}
+
+// --- the manager's new order on a customer's behalf [C, owner 2026-11-20] -----------------------
+
+// Only the manager creates (a UI hint: the server refuses everybody else).
+const canCreate = computed(() => (currentUser.user.value?.staffRoles ?? []).includes('MANAGER'));
+const newOrder = useNewOrderDraft();
+const newOpen = ref(false);
+
+/** «+ Yangi buyurtma»: a fresh draft, step 1 over the list. */
+function startNewOrder(): void {
+  newOrder.reset();
+  newOpen.value = true;
+}
+
+// "O'zgartirish" on the new order page comes back here with `?new=1`: step 1 again, the cart kept.
+watch(
+  () => route.query.new,
+  (flag) => {
+    if (flag === undefined) return;
+    if (canCreate.value) newOpen.value = true;
+    const { new: _flag, ...rest } = route.query;
+    void _flag;
+    void router.replace({ query: rest });
+  },
+  { immediate: true },
+);
+
+function customerChosen(customer: NewOrderCustomer, member: NewOrderCustomerMember): void {
+  newOrder.choose(customer, member);
+  newOpen.value = false;
+  void router.push({ name: 'staff-new-order' });
+}
+
+async function confirmApprove(
+  skipAccounting: boolean,
+  paymentMethod: PaymentMethod,
+  order: FullOrderDetail,
+  plan: PlanChoice,
+): Promise<void> {
+  if (approveBusy.value) return;
+  approveBusy.value = true;
+  stockRefused = false;
+  try {
+    // The dialog read the order just now: its row version is the one the manager decided on.
+    await actions.approve(order, paymentMethod, plan, skipAccounting);
+    if (!stockRefused) approveOpen.value = false;
+  } finally {
+    approveBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -246,309 +232,226 @@ const pageState = computed(() => (paged.state.value === 'empty' ? 'ready' : page
     <div class="orders">
       <header class="head">
         <h1 class="head__title">{{ t('orders.page.title') }}</h1>
-        <span class="head__info">
-          {{
-            t(
-              'orders.page.info',
-              {
-                count: totals.count,
-                sum: formatMoney(totals.sum ?? '0'),
-                currency: t('common.currency'),
-              },
-              totals.count,
-            )
-          }}
-        </span>
+        <button
+          v-if="canCreate"
+          type="button"
+          class="new"
+          data-testid="new-order-open"
+          @click="startNewOrder"
+        >
+          <StaffIcon name="plus" :size="16" />
+          {{ t('orders.newOrder.open') }}
+        </button>
       </header>
 
-      <div class="list">
+      <div class="toolbar">
+        <SearchField
+          v-model="search"
+          class="search"
+          label-hidden
+          :placeholder="t('orders.filters.searchPlaceholder')"
+        />
+        <button
+          type="button"
+          class="fbtn"
+          :class="{ 'fbtn--on': filtersOpen }"
+          :aria-expanded="filtersOpen"
+          :aria-label="
+            secondaryCount > 0
+              ? t('orders.filters.moreActive', { count: secondaryCount })
+              : t('orders.filters.more')
+          "
+          data-testid="filters-toggle"
+          @click="filtersOpen = !filtersOpen"
+        >
+          <StaffIcon name="filter" :size="16" />
+          <span class="fbtn__label">{{ t('orders.filters.more') }}</span>
+          <span v-if="secondaryCount > 0" class="fbtn__badge" aria-hidden="true">{{
+            secondaryCount
+          }}</span>
+        </button>
         <OrdersStatusTabs
+          class="tabs"
           :model-value="stageValue"
           :counts="tabCounts"
           :own-stage="ownStage"
+          :limit="wide ? undefined : COMPACT_TABS"
           @update:model-value="pickStage"
         />
+      </div>
 
-        <FilterPanel class="bar" :aria-label="t('orders.filters.group')">
-          <SearchField
-            v-model="search"
-            class="search"
-            :placeholder="t('orders.filters.searchPlaceholder')"
-          />
-          <AppButton
-            variant="secondary"
-            size="sm"
-            class="more"
-            :aria-label="
-              secondaryCount > 0
-                ? t('orders.filters.moreActive', { count: secondaryCount })
-                : undefined
-            "
-            @click="sheetOpen = true"
-          >
-            <StaffIcon name="filter" :size="14" class="more__icon" />
-            {{ t('orders.filters.more') }}
-            <span v-if="secondaryCount > 0" class="more__badge" aria-hidden="true">{{
-              secondaryCount
-            }}</span>
-          </AppButton>
-          <div v-if="hasOrderFilters(filters)" class="applied">
-            <ul
-              v-if="chips.length > 0"
-              class="applied__chips"
-              :aria-label="t('table.appliedFilters')"
-            >
-              <li v-for="chip in chips" :key="chip.key">
-                <button
-                  type="button"
-                  class="chip"
-                  :aria-label="t('table.removeFilter', { filter: chip.label })"
-                  @click="dropFilter(chip.key)"
-                >
-                  {{ chip.label }}
-                  <StaffIcon name="x" :size="12" />
-                  <span class="sr-only">{{ '×' }}</span>
-                </button>
-              </li>
-            </ul>
-            <button type="button" class="clear" @click="setFilters(NO_ORDER_FILTERS)">
-              {{ t('orders.page.clear') }}
-            </button>
-          </div>
-          <span class="result-count" role="status">{{ resultText }}</span>
-        </FilterPanel>
+      <OrdersFilterBar
+        v-if="filtersOpen"
+        :filters="filters"
+        :show-money="hasMoney"
+        :stages="stageOptions"
+        @update:filters="setFilters"
+        @clear="setFilters(NO_ORDER_FILTERS)"
+      />
 
-        <OrdersFilterSheet
-          v-model="sheetOpen"
-          :filters="filters"
-          :show-money="hasMoney"
-          :result-count="totals.count"
-          @update:filters="setFilters"
-          @reset="resetSecondary"
-        />
+      <OrdersList
+        :class="{ refreshing: paged.refreshing.value }"
+        :aria-busy="paged.refreshing.value"
+        :orders="list"
+        :can-approve="canApprove"
+        :empty-text="t('orders.page.empty')"
+        @approve="askApprove"
+      />
 
-        <DataTable
-          :class="{ refreshing: paged.refreshing.value }"
-          :aria-busy="paged.refreshing.value"
-          :columns="columns"
-          :rows="list"
-          :row-key="(o: OrderSummary) => o.id"
-          :row-to="(o: OrderSummary) => ({ name: 'staff-order', params: { orderId: o.id } })"
-          :label="t('orders.page.list')"
-          :empty-text="t('orders.page.empty')"
-          :style="{ '--dt-min-width': hasMoney ? '1040px' : '680px' }"
-        >
-          <template #cell-number="{ row }">
-            <span class="number">{{ row.orderNumber }}</span>
-          </template>
-          <template #cell-stage="{ row }">
-            <AppBadge :tone="stageTone(row.status)" dot>{{
-              t(`orders.stages.${row.status}`)
-            }}</AppBadge>
-          </template>
-          <template #cell-placedBy="{ row }">
-            <PersonName
-              v-if="isFullSummary(row)"
-              :name="row.placedBy.fullName"
-              :user-id="row.placedBy.userId"
-            />
-          </template>
-          <template #cell-payment="{ row }">
-            <AppBadge
-              v-if="isFullSummary(row) && !isClosedWithoutDelivery(row.status)"
-              :tone="paymentTone(row.paymentStatus)"
-              dot
-            >
-              {{ t(`orders.payment.${row.paymentStatus}`) }}
-            </AppBadge>
-          </template>
-          <template #cell-submitted="{ row }">
-            <span class="muted">{{ formatShortDateTime(row.submittedAt) }}</span>
-          </template>
-          <template #cell-age="{ row }">
-            <span class="muted" :title="t('orders.columns.ageHint')">{{
-              ageText(row) || '—'
-            }}</span>
-          </template>
-          <template #card="{ row }">
-            <span class="card__top">
-              <span class="number">{{ row.orderNumber }}</span>
-              <AppBadge :tone="stageTone(row.status)" dot>{{
-                t(`orders.stages.${row.status}`)
-              }}</AppBadge>
-            </span>
-            <span class="card__org">{{ row.organizationName }}</span>
-            <span class="card__bottom">
-              <b v-if="totalOf(row) !== null" class="num">
-                {{ formatMoney(totalOf(row)!) }} {{ t('common.currency') }}
-              </b>
-              <AppBadge
-                v-if="isFullSummary(row) && !isClosedWithoutDelivery(row.status)"
-                :tone="paymentTone(row.paymentStatus)"
-                dot
-              >
-                {{ t(`orders.payment.${row.paymentStatus}`) }}
-              </AppBadge>
-              <span class="muted" :title="ageText(row) ? t('orders.columns.ageHint') : undefined">{{
-                ageText(row) || formatShortDateTime(row.submittedAt)
-              }}</span>
-            </span>
-          </template>
-        </DataTable>
-
-        <AppButton
-          v-if="list.length === 0 && hasOrderFilters(filters)"
-          variant="secondary"
-          class="empty-clear"
-          @click="setFilters(NO_ORDER_FILTERS)"
-        >
-          {{ t('orders.page.clear') }}
+      <AppButton
+        v-if="list.length === 0 && hasOrderFilters(filters)"
+        variant="secondary"
+        class="empty-clear"
+        @click="setFilters(NO_ORDER_FILTERS)"
+      >
+        {{ t('orders.page.clear') }}
+      </AppButton>
+      <div v-if="paged.nextCursor.value !== null" ref="listEnd" class="more-rows">
+        <p v-if="paged.moreError.value" class="more-rows__error" role="alert">
+          {{ t('orders.page.moreFailed') }}
+        </p>
+        <AppButton variant="secondary" :loading="paged.loadingMore.value" @click="paged.loadMore()">
+          {{ t('orders.page.loadMore') }}
         </AppButton>
-        <div v-if="paged.nextCursor.value !== null" ref="listEnd" class="more-rows">
-          <p v-if="paged.moreError.value" class="more-rows__error" role="alert">
-            {{ t('orders.page.moreFailed') }}
-          </p>
-          <AppButton
-            variant="secondary"
-            :loading="paged.loadingMore.value"
-            @click="paged.loadMore()"
-          >
-            {{ t('orders.page.loadMore') }}
-          </AppButton>
-        </div>
-        <p v-if="list.length > 0" class="foot">{{ footer }}</p>
       </div>
     </div>
+    <NewOrderCustomerDialog
+      v-if="canCreate"
+      v-model="newOpen"
+      :notice="newOrder.notice.value"
+      :initial-customer="newOrder.customer.value"
+      :initial-member="newOrder.member.value"
+      @chosen="customerChosen"
+    />
+    <ApproveOrderDialog
+      v-model="approveOpen"
+      :order="approving"
+      :busy="approveBusy"
+      :plan="approvalPlan"
+      @confirm="confirmApprove"
+    />
   </StateView>
 </template>
 
 <style scoped>
+/* Approved «Buyurtmalar» design: content up to 1240px, 16px between the blocks. */
 .orders {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-block);
+  gap: 16px;
+  max-width: 1240px;
+  min-width: 0;
   animation: viewIn 0.35s var(--ease) both;
 }
 
 .head {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-/* v8 page title: 28px regular; the summary line under it 12px secondary. */
+.new {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--acc);
+  border-radius: 10px;
+  background: var(--acc);
+  color: var(--acc-on);
+  font: inherit;
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.new:hover {
+  border-color: var(--acc-hover);
+  background: var(--acc-hover);
+}
+
+.new:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
 .head__title {
   margin: 0;
-  font-size: var(--fs-h1);
-  font-weight: 400;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   line-height: 1.2;
 }
 
-.head__info {
-  font-size: var(--fs-small);
-  color: var(--t2);
-}
-
-/* Tabs, toolbar, table and footer read as one block (v8 draws them in one card; DataTable is a
-   card of its own, so they are stacked tight instead of nested). */
-.list {
+.toolbar {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
   min-width: 0;
 }
 
 .search {
-  flex: 1 1 240px;
-  max-width: 316px;
+  flex: 0 1 380px;
+  max-width: none;
 }
 
-.more {
-  flex: 0 0 auto;
-  height: 38px;
+.search :deep(.search__box) {
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: var(--fs-body-lg);
 }
 
-.more__icon {
-  color: var(--t2);
+.fbtn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--e8);
+  border-radius: 10px;
+  background: var(--w);
+  color: var(--ink);
+  font-size: var(--fs-body-lg);
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.more__badge {
-  padding: 1px 6px;
-  border-radius: var(--r-kbd);
+.fbtn:hover,
+.fbtn--on {
+  border-color: var(--d9);
+  background: var(--hov);
+}
+
+.fbtn:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+.fbtn__badge {
+  padding: 0 7px;
+  border-radius: 999px;
   background: var(--acc);
   color: var(--acc-on);
-  font-size: var(--fs-group);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
 }
 
-.applied {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  min-height: 38px;
-}
-
-.applied__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* v8 filter chip: orange tint, 30px high, the remove cross on the right. */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  padding: 0 8px 0 10px;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--acc-bg);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--acc-fg);
-  cursor: pointer;
-}
-
-.chip:hover {
-  box-shadow: inset 0 0 0 1px var(--acc);
-}
-
-.clear {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font-size: var(--fs-meta);
-  color: var(--acc-fg);
-  cursor: pointer;
-}
-
-.clear:hover {
-  text-decoration: underline;
-}
-
-.result-count {
-  align-self: center;
-  margin-left: auto;
-  font-size: var(--fs-meta);
-  color: var(--t2);
-}
-
-.number {
-  font-weight: 500;
-  color: var(--acc-fg);
+/* The pills take a line of their own under the search and the button. */
+.tabs {
+  flex: 1 1 100%;
 }
 
 .empty-clear {
   align-self: center;
 }
 
-/* The end of the loaded rows: the next page loads on its own when this comes near. */
 /* The rows of the previous filters while the new ones load. */
 .refreshing {
   color: var(--t3);
@@ -568,51 +471,39 @@ const pageState = computed(() => (paged.state.value === 'empty' ? 'ready' : page
   color: var(--red);
 }
 
-.foot {
-  margin: 0;
-  padding: 0 4px;
-  font-size: var(--fs-meta);
-  color: var(--t2);
-}
-
-.muted {
-  color: var(--t2);
-  white-space: nowrap;
-}
-
-.card__top,
-.card__bottom {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px 10px;
-}
-
-.card__org {
-  font-size: var(--fs-body);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.card__bottom {
-  justify-content: flex-start;
-  font-size: var(--fs-small);
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
 @media (pointer: coarse), (hover: none) {
-  .chip,
-  .clear {
+  .fbtn {
     min-height: 44px;
+  }
+}
+
+/* Phone: the search and an icon-only filter button share the first row. */
+@media (max-width: 599px) {
+  .search {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .fbtn {
+    position: relative;
+    justify-content: center;
+    width: 48px;
+    padding: 0;
+  }
+
+  .fbtn__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .fbtn__badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
   }
 }
 </style>

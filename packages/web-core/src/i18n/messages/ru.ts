@@ -107,6 +107,7 @@ export const coreRu: CoreMessageSchema = {
     orderingOrganizationInactive: 'Эта организация не может оформлять заказы.',
     staffOrderingDisabled: 'Сотрудники компании не могут оформлять заказы здесь.',
     contactRequired: 'Сначала укажите имя и номер телефона.',
+    placerNotMember: 'Этот человек больше не состоит в организации. Выберите клиента заново.',
     lastAdmin: 'В системе должен остаться хотя бы один активный администратор.',
     telegramIdRequired: 'Человек без Telegram ID должен оставаться сотрудником.',
     organizationNotLinked:

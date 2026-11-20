@@ -325,6 +325,19 @@ export function createFakeCostBackend(options: FakeCostBackendOptions): {
     return result.data;
   }
 
+  // A demo stand-in for the api's brand rule (staff choice, else the brand finder): the first
+  // known brand word in any name of the product.
+  const DEMO_BRANDS = ['Xiaomi', 'Samsung', 'Huawei', 'Apple', 'Baseus', 'Ugreen', 'JBL'];
+  const brandOf = (product: StaffProductDetailResponse): string | null =>
+    DEMO_BRANDS.find((brand) =>
+      product.translations.some((t) =>
+        t.name
+          .toLowerCase()
+          .split(/[\s,()/-]+/)
+          .includes(brand.toLowerCase()),
+      ),
+    ) ?? null;
+
   // Distinct suppliers of the live lines, sorted like the api (code unit order).
   const suppliersOf = (code: string): string[] =>
     [...new Set(liveDeliveries(code).map((d) => d.supplier))].sort((a, b) =>
@@ -489,6 +502,7 @@ export function createFakeCostBackend(options: FakeCostBackendOptions): {
           latestDelivery: latestOf(p.productCode),
           deliveryCount: liveDeliveries(p.productCode).length,
           suppliers: suppliersOf(p.productCode),
+          brand: brandOf(p),
           ...view.primaryImage(p.productCode),
         }));
       return { items, ...categoryCounts(candidates), nextCursor: null, total: items.length };

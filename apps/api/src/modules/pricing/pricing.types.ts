@@ -86,3 +86,11 @@ export interface PriceHistoryEntry {
   oldCurrency: string;
   currency: string;
 }
+
+/** The latest published version that changed a product's prices ("O'zgargan" in Narxlar). */
+export interface LastPriceChange {
+  versionNumber: number;
+  publishedAt: Date;
+  /** The publisher's user id; null when the version records none. */
+  publishedBy: string | null;
+}

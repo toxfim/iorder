@@ -1,10 +1,13 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-export interface UrlStateOptions {
+export interface UrlStateOptions<T extends string> {
   /** The value that is NOT written to the address (the page's default). */
-  readonly fallback: string;
-  /** Rejects values from a hand-edited address; an invalid one falls back. */
+  readonly fallback: T;
+  /**
+   * Rejects values from a hand-edited address; an invalid one falls back. Required for a narrower
+   * `T` than `string`: it is the only check that the address value is a `T`.
+   */
   readonly isValid?: (value: string) => boolean;
   /** Typing: write to the address after the person pauses (browsers rate-limit history writes). */
   readonly debounceMs?: number;
@@ -16,15 +19,20 @@ export interface UrlStateOptions {
  * change of the address itself (Back, a pasted link) is read back into the ref. Reload and Back
  * therefore keep the tab, category and search of a list. Other query parameters are untouched.
  */
-export function useUrlState(key: string, state: Ref<string>, options: UrlStateOptions): void {
+export function useUrlState<T extends string>(
+  key: string,
+  state: Ref<T>,
+  options: UrlStateOptions<T>,
+): void {
   const route = useRoute();
   const router = useRouter();
   const { fallback, isValid = () => true, debounceMs = 0 } = options;
 
-  const fromAddress = (): string => {
+  const fromAddress = (): T => {
     const raw = route.query[key];
     const value = Array.isArray(raw) ? raw[0] : raw;
-    return typeof value === 'string' && value !== '' && isValid(value) ? value : fallback;
+    // `isValid` is the caller's check that the value is one of `T`.
+    return typeof value === 'string' && value !== '' && isValid(value) ? (value as T) : fallback;
   };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -33,7 +41,7 @@ export function useUrlState(key: string, state: Ref<string>, options: UrlStateOp
     timer = undefined;
   };
 
-  function write(value: string): void {
+  function write(value: T): void {
     timer = undefined;
     if (fromAddress() === value) return;
     const { [key]: _previous, ...rest } = route.query;

@@ -1246,6 +1246,85 @@ describe('pricing (real PostgreSQL)', () => {
         403,
       );
     });
+
+    it("gives each current item its last price change: any tier counts, a re-entry too, the rest doesn't", async () => {
+      const lastChanges = async (): Promise<Record<string, unknown>> => {
+        const current = await call('GET', '/staff/price-list/current');
+        expect(current.status).toBe(200);
+        return Object.fromEntries(
+          current.body.items.map((i: Body) => [i.productCode, i.lastChange]),
+        );
+      };
+      const publish = async (body: Body): Promise<number> => {
+        const head = (await call('GET', '/staff/price-list/current')).body.version?.number ?? null;
+        const r = await call('POST', '/staff/price-list/publish', MANAGER, {
+          baseVersionNumber: head,
+          upserts: [],
+          removedProductIds: [],
+          ...body,
+        });
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        return r.body.number as number;
+      };
+
+      t.clock.set(new Date('2026-10-20T08:00:00Z'));
+      const v1 = await publish({
+        baseVersionNumber: null,
+        upserts: [
+          { productId: apple, basePrice: '100.00' },
+          { productId: pear, basePrice: '5.00' },
+        ],
+      });
+      t.clock.set(new Date('2026-10-21T08:00:00Z'));
+      const v2 = await publish({ upserts: [{ productId: apple, basePrice: '120.50' }] });
+      // Only the wholesale price of the pear changes: that is a price change too.
+      t.clock.set(new Date('2026-10-22T08:00:00Z'));
+      const v3 = await publish({
+        upserts: [{ productId: pear, basePrice: '5.00', wholesalePrice: '4.50' }],
+      });
+      expect(await lastChanges()).toEqual({
+        APPLE: { versionNumber: v2, changedAt: '2026-10-21T08:00:00.000Z', changedBy: null },
+        PEAR: { versionNumber: v3, changedAt: '2026-10-22T08:00:00.000Z', changedBy: null },
+      });
+
+      // Removed, then priced again at the very same price: the return is the change.
+      t.clock.set(new Date('2026-10-23T08:00:00Z'));
+      await publish({ removedProductIds: [apple] });
+      t.clock.set(new Date('2026-10-24T08:00:00Z'));
+      const v5 = await publish({ upserts: [{ productId: apple, basePrice: '120.50' }] });
+      const after = await lastChanges();
+      expect(after.APPLE).toEqual({
+        versionNumber: v5,
+        changedAt: '2026-10-24T08:00:00.000Z',
+        changedBy: null,
+      });
+      expect(after.PEAR).toMatchObject({ versionNumber: v3 });
+      expect(v1).toBeLessThan(v2);
+    });
+
+    it('gives each current item its brand by the price list file rule, null without one', async () => {
+      const phone = (
+        await t.prisma.product.create({
+          data: {
+            productCode: 'PHONE',
+            unit: 'box',
+            translations: { create: [{ lang: 'RU', name: 'Смартфон Xiaomi Redmi 15' }] },
+          },
+        })
+      ).id;
+      await publishVersion({ [apple]: '10.00', [phone]: '150.00' });
+      const current = await call('GET', '/staff/price-list/current');
+      const brands = Object.fromEntries(
+        current.body.items.map((i: Body) => [i.productCode, i.brand]),
+      );
+      expect(brands).toEqual({ APPLE: null, PHONE: 'Xiaomi' });
+      // Staff-only: the customer list carries neither field.
+      const customer = await call('GET', '/price-list/current', SHOP_OWNER);
+      for (const item of customer.body.items as Body[]) {
+        expect(item).not.toHaveProperty('brand');
+        expect(item).not.toHaveProperty('lastChange');
+      }
+    });
   });
 
   describe('audit: full history in the same transaction', () => {

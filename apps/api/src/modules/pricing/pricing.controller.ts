@@ -80,7 +80,7 @@ export class PricingController {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- validated, intentionally unused
     @Query(new ZodValidationPipe(customerPriceListQuerySchema)) _query: CustomerPriceListQuery,
   ): Promise<CustomerPriceListResponse> {
-    const list = await this.pricing.getCurrentForCustomer(actor);
+    const list = await this.pricing.getCatalogForCustomer(actor);
     const [images, orderableStock] = await Promise.all([
       this.pricing.primaryImageIds(list),
       this.pricing.getOrderableStock(list.items.map((item) => item.product)),
@@ -92,17 +92,21 @@ export class PricingController {
   @RequirePermission('BROWSE_PRICE_LIST')
   async staffCurrent(@CurrentActor() actor: Actor): Promise<StaffPriceListWithRateResponse> {
     const list = await this.pricing.getCurrentForStaff(actor);
-    const [snapshots, images, sheetMatches] = await Promise.all([
+    const [snapshots, images, sheetMatches, brands, lastChanges] = await Promise.all([
       this.pricing.getRateSnapshots(actor, [list.version.id]),
       this.pricing.primaryImageIds(list),
       this.pricing.sheetMatches(list),
+      this.pricing.brandNames(list),
+      // Read for the same version as the list, so a publish in between cannot mix two lists.
+      this.pricing.lastPriceChanges(actor, list.version),
     ]);
     return toStaffPriceListWithRate(
       list,
       snapshots,
       images,
-      await this.publisherNames([list.version]),
+      await this.publisherNames([list.version, ...lastChanges.values()]),
       sheetMatches,
+      { brands, lastChanges },
     );
   }
 

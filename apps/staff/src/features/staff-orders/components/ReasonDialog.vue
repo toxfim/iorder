@@ -4,11 +4,22 @@ import { useI18n } from 'vue-i18n';
 import AppButton from '@core/components/ui/AppButton.vue';
 import AppModal from '@core/components/ui/AppModal.vue';
 
+/** The grey box of the approved design: what is being rejected or cancelled. */
+export interface ReasonSummary {
+  readonly orderNumber: string;
+  /** Formatted; absent for a role that sees no money. */
+  readonly total?: string;
+  readonly client: string;
+  /** The payment plan, in words. */
+  readonly plan?: string;
+}
+
 const props = defineProps<{
   modelValue: boolean;
   /** Rejecting and cancelling share the dialog; the reason is required for both (lifecycle §3). */
   kind: 'reject' | 'cancel';
   busy?: boolean;
+  summary?: ReasonSummary | null;
 }>();
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
@@ -41,10 +52,18 @@ function submit(): void {
 <template>
   <AppModal
     :model-value="modelValue"
-    :title="t(`orders.reasonDialog.${kind}Title`)"
+    :title="t(`orders.reasonDialog.${kind}Question`)"
     :description="t(`orders.reasonDialog.${kind}Hint`)"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <div v-if="summary" class="sum" data-testid="reason-summary">
+      <span class="sum__row">
+        <b class="sum__id mono">{{ summary.orderNumber }}</b>
+        <b v-if="summary.total" class="mono">{{ summary.total }}</b>
+      </span>
+      <span class="sum__who">{{ summary.client }}</span>
+      <span v-if="summary.plan" class="sum__plan">{{ summary.plan }}</span>
+    </div>
     <div class="quick">
       <button
         v-for="item in quick"
@@ -69,9 +88,10 @@ function submit(): void {
     />
     <template #footer>
       <AppButton variant="secondary" size="lg" @click="emit('update:modelValue', false)">
-        {{ t('orders.reasonDialog.close') }}
+        {{ t('orders.approveDialog.back') }}
       </AppButton>
-      <AppButton variant="danger" size="lg" :disabled="!canConfirm" @click="submit">
+      <!-- The design draws the negative, final step in ink, the positive one in the accent. -->
+      <AppButton variant="dark" size="lg" :disabled="!canConfirm" @click="submit">
         {{ t(`orders.reasonDialog.${kind}Ok`) }}
       </AppButton>
     </template>
@@ -79,6 +99,40 @@ function submit(): void {
 </template>
 
 <style scoped>
+.sum {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--page);
+}
+
+.sum__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.sum__id {
+  font-size: var(--fs-body);
+}
+
+.sum__who {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sum__plan {
+  font-size: var(--fs-body);
+  color: var(--t3);
+}
+
 .quick {
   display: flex;
   flex-wrap: wrap;

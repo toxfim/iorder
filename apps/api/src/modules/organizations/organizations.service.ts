@@ -5,6 +5,7 @@ import {
   type CreateOrganizationRequest,
   type Locale,
   type OrganizationInviteStatus,
+  type OrganizationLabel,
   type OrganizationRole,
   type OrganizationType,
   type PriceTier,
@@ -45,6 +46,15 @@ import {
 const ENTITY_TYPE = 'ORGANIZATION';
 /** How many organizations a name search hands to another module; a search should be narrower. */
 const NAME_SEARCH_LIMIT = 500;
+
+/** An organization an order may be created for, with its current members (not an endpoint shape). */
+export interface OrderCustomer {
+  id: string;
+  name: string;
+  type: OrganizationType;
+  label: OrganizationLabel;
+  members: { userId: string; fullName: string; phone: string | null }[];
+}
 
 export interface MemberDetail extends MemberView {
   fullName: string;
@@ -243,6 +253,68 @@ export class OrganizationsService {
    */
   async findIdsByName(search: string): Promise<string[]> {
     return this.repository.findIdsByName(search, NAME_SEARCH_LIMIT);
+  }
+
+  /**
+   * For other modules (the manager's new order [C, owner 2026-11-20]): the organizations an order may
+   * be created for now (ACTIVE, not archived) with their CURRENT members; by name, member name or
+   * member phone, type and label, or by id (the recent ones). Not an endpoint: the caller has
+   * authorized. Members only: staff are never members.
+   */
+  async findOrderCustomers(
+    filter: {
+      search?: string;
+      type?: OrganizationType;
+      label?: OrganizationLabel;
+      ids?: readonly string[];
+    },
+    take: number,
+  ): Promise<OrderCustomer[]> {
+    const memberUserIds =
+      filter.search === undefined ? [] : await this.identity.findIdsByNameOrPhone(filter.search);
+    const rows = await this.repository.findOrderable(
+      {
+        ...(filter.type ? { type: filter.type } : {}),
+        ...(filter.label ? { label: filter.label } : {}),
+        ...(filter.ids ? { ids: filter.ids } : {}),
+        ...(filter.search === undefined ? {} : { search: { text: filter.search, memberUserIds } }),
+      },
+      take,
+    );
+    const details = await this.withNames(rows);
+    // Only a current member with an ACTIVE, non-staff account may be the placer: anybody else
+    // would be refused at creation (PLACER_NOT_MEMBER), so they are not offered.
+    const memberIds = details.flatMap((d) =>
+      d.members.filter((m) => m.status === 'ACTIVE').map((m) => m.userId),
+    );
+    const accounts = await this.identity.findSummaries(memberIds, { withPhones: false });
+    const mayPlace = (userId: string): boolean => {
+      const account = accounts.get(userId);
+      return account?.status === 'ACTIVE' && account.staffRoles.length === 0;
+    };
+    return details.map(({ organization, members }) => ({
+      id: organization.id,
+      name: organization.name,
+      type: organization.type,
+      label: organization.label,
+      members: members
+        .filter((m) => m.status === 'ACTIVE' && mayPlace(m.userId))
+        .map((m) => ({ userId: m.userId, fullName: m.fullName, phone: m.phone })),
+    }));
+  }
+
+  /**
+   * For other modules (the manager's new order, inside its transaction): locks the organization
+   * (every membership change takes the same lock) and answers whether it is ACTIVE, not archived,
+   * and the person is a CURRENT member of it. Not an endpoint: the caller has authorized.
+   */
+  async lockActiveMember(tx: Tx, organizationId: string, userId: string): Promise<boolean> {
+    if (!(await this.repository.lockById(tx, organizationId))) return false;
+    const row = await this.repository.findById(organizationId, tx);
+    if (!row || row.organization.status !== 'ACTIVE' || row.organization.archivedAt !== null) {
+      return false;
+    }
+    return row.members.some((m) => m.userId === userId && m.status === 'ACTIVE');
   }
 
   /**

@@ -34,5 +34,8 @@ credentials*.json
 
 # Local agent notes and screenshots (not part of the repo)
 AGENTS.md
+
+# Design package handed over as a zip (kept locally, not in git)
+/docs/design-package.zip
 # Private docs (repo toxfim/iorder-docs), cloned here
 docs/private/

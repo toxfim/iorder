@@ -74,6 +74,8 @@ const fullOrder = {
   orderNumber: 'IO-10001',
   organizationId: id2,
   organizationName: 'Alpha shop',
+  organizationType: 'GROUP',
+  organizationLabel: 'PARTNER',
   status: 'ACCOUNTING_CLEARED',
   itemCount: 1,
   submittedAt: at,
@@ -126,6 +128,7 @@ const fulfilmentOrder = {
   orderNumber: 'IO-10001',
   organizationId: id2,
   organizationName: 'Alpha shop',
+  organizationType: 'PERSON',
   status: 'RELEASED',
   itemCount: 1,
   submittedAt: at,
@@ -489,6 +492,10 @@ describe('order responses', () => {
     expect(staffOrderSchema.safeParse({ ...fulfilmentOrder, priceListVersionId: id }).success).toBe(
       false,
     );
+    // The label is a price tier: only the roles that see money get it.
+    expect(
+      staffOrderSchema.safeParse({ ...fulfilmentOrder, organizationLabel: 'PARTNER' }).success,
+    ).toBe(false);
     expect(
       staffOrderSchema.safeParse({
         ...fulfilmentOrder,
@@ -720,5 +727,67 @@ describe('payment plan contract', () => {
     expect(
       submitOrderRequestSchema.safeParse({ paymentPlan: 'CASH', expectedTotalAmount }).success,
     ).toBe(false);
+  });
+});
+
+describe("the manager's new order contract [C, owner 2026-11-20]", () => {
+  const { createStaffOrderRequestSchema, newOrderCatalogItemSchema, newOrderCustomerQuerySchema } =
+    staffOrders;
+  const productId = '0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b';
+  const valid = {
+    organizationId: '0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0c',
+    placedByUserId: '0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0d',
+    paymentPlan: 'FULL',
+    lines: [{ productId, quantity: '2' }],
+    expectedTotalAmount: '3000.00',
+  };
+
+  it('requires a plan (nothing preselected), whole quantities and one line per product', () => {
+    expect(createStaffOrderRequestSchema.safeParse(valid).success).toBe(true);
+    expect(createStaffOrderRequestSchema.safeParse({ ...valid, comment: 'Ertaga' }).success).toBe(
+      true,
+    );
+    const { paymentPlan: _plan, ...noPlan } = valid;
+    void _plan;
+    expect(createStaffOrderRequestSchema.safeParse(noPlan).success).toBe(false);
+    expect(
+      createStaffOrderRequestSchema.safeParse({ ...valid, lines: [{ productId, quantity: '1.5' }] })
+        .success,
+    ).toBe(false);
+    expect(createStaffOrderRequestSchema.safeParse({ ...valid, lines: [] }).success).toBe(false);
+    expect(
+      createStaffOrderRequestSchema.safeParse({
+        ...valid,
+        lines: [
+          { productId, quantity: '1' },
+          { productId, quantity: '2' },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(createStaffOrderRequestSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('filters customers by the real types and labels only', () => {
+    expect(newOrderCustomerQuerySchema.safeParse({ label: 'ALIF_FACTORING' }).success).toBe(true);
+    expect(newOrderCustomerQuerySchema.safeParse({ type: 'PERSON' }).success).toBe(true);
+    expect(newOrderCustomerQuerySchema.safeParse({ label: 'VIP' }).success).toBe(false);
+  });
+
+  it('a catalog item has no cost field (strict)', () => {
+    const item = {
+      productId,
+      productCode: '40799',
+      name: 'Air Fryer',
+      category: null,
+      brand: 'Xiaomi',
+      imageUrl: null,
+      imageLargeUrl: null,
+      unitPrice: '1500.00',
+      deferredUnitPrice: null,
+      stock: 28,
+    };
+    expect(newOrderCatalogItemSchema.safeParse(item).success).toBe(true);
+    expect(newOrderCatalogItemSchema.safeParse({ ...item, stock: null }).success).toBe(true);
+    expect(newOrderCatalogItemSchema.safeParse({ ...item, costUsd: '1.00' }).success).toBe(false);
   });
 });

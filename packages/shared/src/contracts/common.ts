@@ -267,6 +267,8 @@ export const CONFLICT_REASONS = [
   'IDEMPOTENCY_KEY_REUSED',
   'ORDERING_ORGANIZATION_INACTIVE',
   'CONTACT_REQUIRED',
+  /** The manager's new order: the chosen person is not a current member of the organization. */
+  'PLACER_NOT_MEMBER',
   'LAST_ADMIN',
   'TELEGRAM_ID_REQUIRED',
   'ORGANIZATION_NOT_LINKED',

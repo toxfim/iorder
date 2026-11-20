@@ -3,6 +3,7 @@ import type { Locale, StaffRole, UserStatusName } from '@iorder/shared';
 import type { DbClient, Tx } from '../../common/database/db-client.js';
 import { escapeLike } from '../../common/database/like.js';
 import { PrismaService } from '../../common/database/prisma.service.js';
+import { phoneSearchDigits } from './phone-search.js';
 import type { KickTarget } from '../../common/outbox/kick-member.js';
 import { runInTransaction } from '../../common/database/transaction.js';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -99,6 +100,24 @@ export class IdentityRepository {
   async findIdsByName(search: string, take: number): Promise<string[]> {
     const rows = await this.prisma.user.findMany({
       where: { fullName: { contains: escapeLike(search), mode: 'insensitive' } },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take,
+    });
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Ids of people whose name contains the text (any letter case) or whose phone contains its digits
+   * (spaces, dashes and a leading + ignored; at least three digits, so "90" alone matches nobody).
+   */
+  async findIdsByNameOrPhone(search: string, take: number): Promise<string[]> {
+    const digits = phoneSearchDigits(search);
+    const byPhone = digits === null ? [] : [{ phone: { contains: digits } }];
+    const rows = await this.prisma.user.findMany({
+      where: {
+        OR: [{ fullName: { contains: escapeLike(search), mode: 'insensitive' } }, ...byPhone],
+      },
       select: { id: true },
       orderBy: { id: 'asc' },
       take,

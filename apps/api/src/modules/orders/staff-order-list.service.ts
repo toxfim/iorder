@@ -123,9 +123,12 @@ export class StaffOrderListService {
   ): Promise<OrderMatchQuery | null> {
     if (!isStaffActor(actor)) throw new ForbiddenError('Access denied');
     const full = seesFullOrderDetail(actor);
-    // The payment status and who placed an order are FULL-view facts; filtering by them would
-    // reveal them.
-    const fullOnly = query.paymentStatus !== undefined || query.placedByUserId !== undefined;
+    // The payment status, the payment plan and who placed an order are FULL-view facts (the
+    // warehouse and the driver never see a plan); filtering by them would reveal them.
+    const fullOnly =
+      query.paymentStatus !== undefined ||
+      query.paymentPlan !== undefined ||
+      query.placedByUserId !== undefined;
     if (fullOnly && !full) throw new ForbiddenError('Access denied');
     const filters = scopeFor(actor, 'VIEW_ORDER');
     if (filters.length === 0) return null;
@@ -142,6 +145,7 @@ export class StaffOrderListService {
     return {
       filters,
       ...(query.paymentStatus === undefined ? {} : { paymentStatus: query.paymentStatus }),
+      ...(query.paymentPlan === undefined ? {} : { paymentPlan: query.paymentPlan }),
       ...(query.organizationId === undefined ? {} : { organizationId: query.organizationId }),
       ...(query.placedByUserId === undefined ? {} : { placedByUserId: query.placedByUserId }),
       ...(day === null ? {} : { submitted: { from: day.start, to: day.end } }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Prisma } from '../../generated/prisma/client.js';
-import { orderablePieces, toPieceCount } from './orderable-stock.js';
+import { isSoldOutInSheet, orderablePieces, toPieceCount } from './orderable-stock.js';
 
 const d = (value: string): Prisma.Decimal => new Prisma.Decimal(value);
 
@@ -29,5 +29,27 @@ describe('toPieceCount', () => {
     expect(toPieceCount(null)).toBeNull();
     expect(toPieceCount(undefined)).toBeNull();
     expect(Number.isSafeInteger(toPieceCount(d('999999999999999999')))).toBe(true);
+  });
+});
+
+describe('isSoldOutInSheet', () => {
+  const sheetProduct = { codeGenerated: false };
+  const byOrder = { codeGenerated: true };
+
+  it('is true for a sheet product whose sheet stock is zero (or a negative sum)', () => {
+    for (const quantity of ['0', '0.000', '-2']) {
+      expect(isSoldOutInSheet(sheetProduct, d(quantity)), quantity).toBe(true);
+    }
+  });
+
+  it('is false while the sheet has anything, also less than one piece', () => {
+    expect(isSoldOutInSheet(sheetProduct, d('0.001'))).toBe(false);
+    expect(isSoldOutInSheet(sheetProduct, d('5'))).toBe(false);
+  });
+
+  it('is false for an unknown stock and for a staff-added (by order) product', () => {
+    expect(isSoldOutInSheet(sheetProduct, undefined)).toBe(false);
+    expect(isSoldOutInSheet(byOrder, d('0'))).toBe(false);
+    expect(isSoldOutInSheet(byOrder, undefined)).toBe(false);
   });
 });

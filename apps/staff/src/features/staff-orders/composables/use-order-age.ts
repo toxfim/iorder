@@ -13,6 +13,7 @@ import { orderAgeMinutes } from '../domain/order-sort';
 export function useOrderAge(clock: Clock): {
   ageText: (order: OrderSummary) => string;
   ageMinutes: (order: OrderSummary) => number;
+  agoText: (order: OrderSummary) => string;
 } {
   const { t } = useI18n();
 
@@ -29,5 +30,20 @@ export function useOrderAge(clock: Clock): {
     return t(`orders.summary.age.${key}`, params);
   }
 
-  return { ageText, ageMinutes };
+  /**
+   * The approved design's "12 daqiqa oldin" / "1 soat oldin" / "2 kun oldin" since the order was
+   * placed, for every order (finished and closed ones too): one unit only, so it fits the list's
+   * number column on one line. Empty only when the instant is invalid or in the future.
+   */
+  function agoText(order: OrderSummary): string {
+    const minutes = orderAgeMinutes(order.submittedAt, clock.now());
+    if (minutes === null) return '';
+    if (minutes < 60) return t('orders.list.agoMinutes', { count: minutes }, minutes);
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t('orders.list.agoHours', { count: hours }, hours);
+    const days = Math.floor(hours / 24);
+    return t('orders.list.agoDays', { count: days }, days);
+  }
+
+  return { ageText, ageMinutes, agoText };
 }

@@ -8,7 +8,7 @@ import { TEST_NOW, createTestServices } from '@/test-utils/create-test-services'
 import { waitFor } from '@core/test-utils/wait';
 import { preloadRouteComponents } from '@/test-utils/preload-routes';
 import tabsSource from './components/OrdersStatusTabs.vue?raw';
-import sheetSource from './components/OrdersFilterSheet.vue?raw';
+import barSource from './components/OrdersFilterBar.vue?raw';
 import pageSource from './components/OrdersPage.vue?raw';
 
 const wrappers: VueWrapper[] = [];
@@ -49,7 +49,7 @@ async function mountAt(identity: string, path: string) {
 
 const squash = (value: string | null | undefined): string =>
   (value ?? '').replace(/\s+/g, ' ').trim();
-const rows = (): number => document.body.querySelectorAll('tbody .dt__row').length;
+const rows = (): number => document.body.querySelectorAll('[data-testid="order-row"]').length;
 const tabs = (): HTMLButtonElement[] =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('.tabs .tab'));
 const tab = (index: number): HTMLButtonElement => {
@@ -63,14 +63,33 @@ const pressed = (): string[] =>
     .filter((b) => b.getAttribute('aria-pressed') === 'true')
     .map((b) => squash(b.textContent));
 const moreButton = (): HTMLButtonElement =>
-  document.body.querySelector('.more') as HTMLButtonElement;
-const sheet = (): HTMLElement | null => document.body.querySelector('[data-testid="drawer"]');
-const radio = (label: string): HTMLInputElement => {
-  const row = Array.from(document.body.querySelectorAll('.choice')).find(
-    (c) => squash(c.textContent) === label,
+  document.body.querySelector('[data-testid="filters-toggle"]') as HTMLButtonElement;
+const bar = (): HTMLElement | null => document.body.querySelector('.fbar');
+const lists = (): string[] =>
+  Array.from(document.body.querySelectorAll('.fbar .dd__trigger')).map(
+    (b) => b.getAttribute('aria-label') ?? '',
   );
-  if (!row) throw new Error(`no choice ${label}`);
-  return row.querySelector('input') as HTMLInputElement;
+/** Opens a filter list and picks the option with this label. */
+async function choose(list: 'payment' | 'period' | 'plan' | 'stage', label: string): Promise<void> {
+  (
+    document.body.querySelector(`[data-testid="filter-${list}"] .dd__trigger`) as HTMLButtonElement
+  ).click();
+  await flushPromises();
+  const option = Array.from(document.body.querySelectorAll('[role="option"]')).find(
+    (o) => squash(o.querySelector('span')?.textContent) === label,
+  ) as HTMLElement | undefined;
+  if (!option) throw new Error(`no option ${label}`);
+  option.click();
+  await flushPromises();
+}
+const options = async (list: 'payment' | 'period' | 'plan' | 'stage'): Promise<string[]> => {
+  (
+    document.body.querySelector(`[data-testid="filter-${list}"] .dd__trigger`) as HTMLButtonElement
+  ).click();
+  await flushPromises();
+  return Array.from(document.body.querySelectorAll('[role="option"]')).map((o) =>
+    squash(o.textContent),
+  );
 };
 
 describe('status tabs', () => {
@@ -113,77 +132,80 @@ describe('status tabs', () => {
     expect(moreButton().textContent).toContain('1');
   });
 
-  it('a period link (sidebar quick filter) presses All and shows the period as a chip', async () => {
+  it('a period link (sidebar quick filter) presses All and opens the filter row with it', async () => {
     await mountAt('manager', '/staff/orders?period=debt');
     expect(pressed()).toEqual([tabLabels()[0]]);
     expect(rows()).toBe(1);
-    const chips = Array.from(document.body.querySelectorAll('.applied .chip'));
-    expect(chips.map((c) => squash(c.textContent))).toEqual([
-      "Davr: Qabul qilingan, to'lanmagan ×",
-    ]);
+    expect(squash(document.body.querySelector('[data-testid="filter-period"]')?.textContent)).toBe(
+      "SanaQabul qilingan, to'lanmagan",
+    );
   });
 });
 
-describe('filters sheet', () => {
+describe('filter row', () => {
   it('opens from the Filters button, applies at once and shows the active count', async () => {
     const { router } = await mountAt('manager', '/staff/orders');
     expect(moreButton().textContent).toContain('Filtrlar');
-    expect(moreButton().querySelector('.more__badge')).toBeNull();
+    expect(moreButton().querySelector('.fbtn__badge')).toBeNull();
+    expect(bar()).toBeNull();
     moreButton().click();
     await flushPromises();
-    expect(sheet()).not.toBeNull();
-    radio("To'lanmagan").click();
-    await flushPromises();
-    radio('Bugun').click();
-    await flushPromises();
-    expect(router.currentRoute.value.query).toEqual({ pay: 'UNPAID', period: 'today' });
-    expect(moreButton().querySelector('.more__badge')?.textContent).toBe('2');
-    expect(moreButton().getAttribute('aria-label')).toBe('Filtrlar, 2 ta faol');
+    expect(moreButton().getAttribute('aria-expanded')).toBe('true');
+    expect(lists()).toEqual(["To'lov turi", 'Sana', "To'lov holati"]);
+    await choose('payment', "To'lanmagan");
+    await choose('period', 'Bugun');
+    await choose('plan', "Bittada to'lash");
+    expect(router.currentRoute.value.query).toEqual({
+      pay: 'UNPAID',
+      period: 'today',
+      plan: 'FULL',
+    });
+    expect(moreButton().querySelector('.fbtn__badge')?.textContent).toBe('3');
+    expect(moreButton().getAttribute('aria-label')).toBe('Filtrlar, 3 ta faol');
+    // "Hammasi" takes a filter off again
+    await choose('payment', 'Hammasi');
+    expect(router.currentRoute.value.query).toEqual({ period: 'today', plan: 'FULL' });
   });
 
-  it('resets only its own filters, keeping stage and search', async () => {
+  it('"Tozalash" clears every filter: the lists, the pressed tab and the search', async () => {
     const { router } = await mountAt('manager', '/staff/orders?stage=RELEASED&pay=PAID&q=a');
-    moreButton().click();
+    expect(bar()).not.toBeNull();
+    (document.body.querySelector('.fbar__clear') as HTMLButtonElement).click();
     await flushPromises();
-    const reset = Array.from(document.body.querySelectorAll('.drawer button')).find(
-      (b) => squash(b.textContent) === 'Tozalash',
-    ) as HTMLButtonElement;
-    reset.click();
-    await flushPromises();
-    expect(router.currentRoute.value.query).toEqual({ stage: 'RELEASED', q: 'a' });
+    expect(router.currentRoute.value.query).toEqual({});
+  });
+});
+
+describe('phones (below 600px)', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) =>
+        ({ matches: !query.includes('min-width: 600px') }) as MediaQueryList,
+    });
   });
 
-  it('is a labelled dialog whose radio groups have legends, and Esc closes it', async () => {
-    await mountAt('manager', '/staff/orders');
+  it('draws three pills and moves every status into Filtrlar → Holat', async () => {
+    const { router } = await mountAt('manager', '/staff/orders');
+    expect(tabs()).toHaveLength(3);
+    expect(tabLabels()[1]).toContain('Menejerda');
     moreButton().click();
     await flushPromises();
-    expect(sheet()?.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby')).toBeTruthy();
-    const legends = Array.from(document.body.querySelectorAll('.group__legend')).map((l) =>
-      squash(l.textContent),
-    );
-    expect(legends).toEqual(["To'lov", 'Davr']);
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await waitFor(() => expect(sheet()).toBeNull());
+    expect(lists()[0]).toBe('Holat');
+    await choose('stage', 'Omborda');
+    expect(router.currentRoute.value.query).toEqual({ stage: 'ACCOUNTING_CLEARED' });
+    // a status without its own pill keeps the row open, so the choice stays visible
+    expect(bar()).not.toBeNull();
+    expect(pressed()).toEqual([]);
   });
 });
 
 describe('applied filters and the empty result', () => {
-  it('Clear all resets stage, sheet filters and text', async () => {
-    const { router } = await mountAt(
-      'manager',
-      '/staff/orders?stage=RELEASED&pay=PAID&period=today',
-    );
-    const clear = Array.from(document.body.querySelectorAll('.applied .clear'))[0];
-    (clear as HTMLButtonElement).click();
-    await flushPromises();
-    expect(router.currentRoute.value.query).toEqual({});
-    expect(rows()).toBe(12);
-  });
-
   it('an empty result explains itself and offers Clear filters', async () => {
     const { router } = await mountAt('manager', '/staff/orders?stage=CLOSED&pay=PAID');
     expect(rows()).toBe(0);
-    expect(squash(document.body.querySelector('.dt__empty')?.textContent)).toBe(
+    expect(squash(document.body.querySelector('.empty')?.textContent)).toBe(
       "Filtrga mos buyurtma yo'q",
     );
     const button = document.body.querySelector('.empty-clear') as HTMLButtonElement;
@@ -193,10 +215,16 @@ describe('applied filters and the empty result', () => {
     expect(router.currentRoute.value.query).toEqual({});
     expect(document.body.querySelector('.empty-clear')).toBeNull();
   });
+
+  it('keeps the money filters that emptied the list, so each can be changed on its own', async () => {
+    await mountAt('manager', '/staff/orders?stage=CLOSED&pay=PAID&plan=DEFERRED');
+    expect(rows()).toBe(0);
+    expect(lists()).toEqual(["To'lov turi", 'Sana', "To'lov holati"]);
+  });
 });
 
 describe('what each role sees', () => {
-  async function mountPageAs(identity: string) {
+  async function mountPageAs(identity: string, path = '/staff/orders') {
     await preloadRouteComponents();
     const { services } = createTestServices({
       identityId: identity,
@@ -211,7 +239,7 @@ describe('what each role sees', () => {
         { path: '/staff/orders/:orderId', name: 'staff-order', component: Page },
       ],
     });
-    await router.push('/staff/orders');
+    await router.push(path);
     const wrapper = mount(Page, {
       attachTo: document.body,
       global: { plugins: [router], provide: { [servicesKey as symbol]: services } },
@@ -225,24 +253,29 @@ describe('what each role sees', () => {
     await mountAt('manager', '/staff/orders');
     moreButton().click();
     await flushPromises();
-    expect(Array.from(document.body.querySelectorAll('.group__legend')).length).toBe(2);
-    expect(() => radio("Qabul qilingan, to'lanmagan")).not.toThrow();
+    expect(lists()).toEqual(["To'lov turi", 'Sana', "To'lov holati"]);
+    expect(await options('period')).toContain("Qabul qilingan, to'lanmagan");
   });
 
   it('a list without money fields (driver, warehouse view) has no payment or debt filter', async () => {
     await mountPageAs('driver');
-    const rowsShown = document.body.querySelectorAll('tbody .dt__row').length;
-    expect(rowsShown).toBeGreaterThanOrEqual(0);
+    expect(rows()).toBeGreaterThanOrEqual(0);
     moreButton().click();
     await flushPromises();
-    const legends = Array.from(document.body.querySelectorAll('.group__legend')).map((l) =>
-      squash(l.textContent),
-    );
-    expect(legends).toEqual(['Davr']);
-    expect(() => radio("Qabul qilingan, to'lanmagan")).toThrow();
+    expect(lists()).toEqual(['Sana']);
+    expect(await options('period')).not.toContain("Qabul qilingan, to'lanmagan");
     // no own-step highlight outside the manager role
     expect(document.body.querySelector('.tab--own')).toBeNull();
   });
+
+  it.each(['driver', 'warehouse'])(
+    'a money filter in a link opens the plain list for the %s, not a refusal',
+    async (who) => {
+      await mountPageAs(who, '/staff/orders?plan=FULL&pay=PAID&period=debt');
+      expect(document.body.querySelector('[data-state="denied"]')).toBeNull();
+      expect(document.body.querySelector('[data-state="error"]')).toBeNull();
+    },
+  );
 });
 
 describe('mobile layout (source checks)', () => {
@@ -254,9 +287,11 @@ describe('mobile layout (source checks)', () => {
     );
   });
 
-  it('the sheet is full width on phones with 48px choices; the page uses tokens only', () => {
-    expect(sheetSource).toContain('width="min(420px, 100%)"');
-    expect(sheetSource).toMatch(/\.choice\s*\{[^}]*min-height:\s*48px/);
+  it('the filter row folds into two columns on a phone; the page uses tokens only', () => {
+    expect(barSource).toMatch(
+      /@media \(max-width: 599px\)[^{]*\{\s*\.fbar\s*\{[^}]*grid-template-columns/,
+    );
+    expect(pageSource).not.toMatch(/#[0-9a-f]{3,6}\b/i);
     expect(pageSource).toContain('var(--');
   });
 });

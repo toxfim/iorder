@@ -94,15 +94,21 @@ describe('order model', () => {
 
 describe('order filters', () => {
   it('reads filters from the URL and ignores anything it does not know', () => {
-    expect(parseOrderFilters({ stage: 'SUBMITTED', pay: 'UNPAID', period: 'today' })).toEqual({
+    expect(
+      parseOrderFilters({ stage: 'SUBMITTED', pay: 'UNPAID', plan: 'DEFERRED', period: 'today' }),
+    ).toEqual({
       stage: 'SUBMITTED',
       payment: 'UNPAID',
+      plan: 'DEFERRED',
       period: 'today',
       text: null,
     });
-    expect(parseOrderFilters({ stage: 'nonsense', pay: 'x', period: ['debt'] })).toEqual({
+    expect(
+      parseOrderFilters({ stage: 'nonsense', pay: 'x', plan: 'LATER', period: ['debt'] }),
+    ).toEqual({
       stage: null,
       payment: null,
+      plan: null,
       period: 'debt',
       text: null,
     });
@@ -139,6 +145,12 @@ describe('order filters', () => {
       'IO-10488',
     ]);
     expect(await numbers({ stage: 'CLOSED' })).toEqual([]);
+    // The payment plan splits the list in two; it reaches the server as `paymentPlan`.
+    const plans = [...(await numbers({ plan: 'FULL' })), ...(await numbers({ plan: 'DEFERRED' }))];
+    expect(plans.sort()).toEqual((await numbers()).sort());
+    expect(orderListRequest({ ...NO_ORDER_FILTERS, plan: 'DEFERRED' }).counts).toEqual({
+      paymentPlan: 'DEFERRED',
+    });
     // A debt is never on an early stage, nor PAID: nothing is asked for.
     expect(
       orderListRequest({ ...NO_ORDER_FILTERS, period: 'debt', stage: 'SUBMITTED' }).list,

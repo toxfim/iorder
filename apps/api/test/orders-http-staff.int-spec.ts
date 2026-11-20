@@ -180,9 +180,12 @@ describe('staff HTTP: list, read and every action (real PostgreSQL)', () => {
           staffOrderSchema,
         );
         expect(got.detail).toBe('FULFILMENT');
+        // The type is for every role; the label (a price tier) only for the roles that see money.
+        expect(got.organizationType).toBe('GROUP');
         // Strict parse already refuses extras; say it in words as well.
         const keys = Object.keys(got);
         for (const hidden of [
+          'organizationLabel',
           'accounting',
           'priceListVersionId',
           'totalAmount',
@@ -224,6 +227,8 @@ describe('staff HTTP: list, read and every action (real PostgreSQL)', () => {
       expect(got).toMatchObject({
         organizationId: w.orgA,
         organizationName: 'Alpha shop',
+        organizationType: 'GROUP',
+        organizationLabel: 'STANDARD',
         status: 'RELEASED',
         totalAmount: '3750.50',
         placedBy: { userId: w.ids.sellerA, fullName: 'Seller A' },
@@ -319,6 +324,15 @@ describe('staff HTTP: list, read and every action (real PostgreSQL)', () => {
       // the PAID filter itself is covered in orders-reads).
       expect(ids(await list(w.actors.accountant, { paymentStatus: 'PAID' }))).toEqual([]);
       expect(ids(await list(w.actors.admin, { organizationId: w.orgB }))).toEqual([b.id]);
+      // The payment plan filter splits the list in two (each order has exactly one plan).
+      const byPlan = async (plan: string): Promise<string[]> =>
+        ids(await list(w.actors.manager, { paymentPlan: plan, limit: 100 }));
+      const full = await byPlan('FULL');
+      const deferred = await byPlan('DEFERRED');
+      expect(full.filter((id) => deferred.includes(id))).toEqual([]);
+      expect([...full, ...deferred].sort()).toEqual(
+        [submitted, approved, cleared, delivered, b].map((o) => o.id).sort(),
+      );
       // Search by order number: part of it, any case; a LIKE wildcard is matched literally.
       expect(
         ids(await list(w.actors.manager, { search: approved.orderNumber.toLowerCase() })),
@@ -407,11 +421,13 @@ describe('staff HTTP: list, read and every action (real PostgreSQL)', () => {
       // The payment status is FULL-view only: filtering by it is refused to the others.
       for (const role of ['warehouse', 'driver'] as const) {
         expectError(await list(w.actors[role], { paymentStatus: 'UNPAID' }), 403, 'FORBIDDEN');
+        expectError(await list(w.actors[role], { paymentPlan: 'FULL' }), 403, 'FORBIDDEN');
       }
       for (const query of [
         { statuses: 'X' },
         { statuses: 'SUBMITTED,' },
         { period: 'YESTERDAY' },
+        { paymentPlan: 'LATER' },
       ]) {
         expectError(await list(manager, query), 422, 'VALIDATION_FAILED');
       }
@@ -460,6 +476,30 @@ describe('staff HTTP: list, read and every action (real PostgreSQL)', () => {
       });
       expect(await counts(w.actors.driver)).toEqual({ DELIVERED: { count: 1 } });
       expect(await counts(w.actors.driver2)).toEqual({});
+
+      // The payment plan narrows the counts like the list: the two plans add up to all of them,
+      // and the filter is refused to the roles that never see the plan.
+      const planCounts = async (plan: string): Promise<Record<string, number>> =>
+        Object.fromEntries(
+          Object.entries(await counts(w.actors.manager, { paymentPlan: plan })).map(
+            ([status, value]) => [status, value.count],
+          ),
+        );
+      const fullCounts = await planCounts('FULL');
+      const deferredCounts = await planCounts('DEFERRED');
+      for (const [status, value] of Object.entries(all)) {
+        expect((fullCounts[status] ?? 0) + (deferredCounts[status] ?? 0)).toBe(value.count);
+      }
+      for (const role of ['warehouse', 'driver'] as const) {
+        expectError(
+          await call(STAFF_ORDER_ROUTES.countOrders, {
+            actor: w.actors[role],
+            query: { paymentPlan: 'FULL' },
+          }),
+          403,
+          'FORBIDDEN',
+        );
+      }
 
       // A status set narrows the counts; grouped, the same per organization.
       const grouped = expectParsed(

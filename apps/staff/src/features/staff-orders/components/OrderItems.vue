@@ -238,15 +238,18 @@ const currency = computed(() => t('common.currency'));
       </p>
       <div v-else class="grid" :class="hasMoney ? 'grid--money' : 'grid--plain'" role="table">
         <div class="grid__head" role="row">
-          <span role="columnheader">{{ t('orders.detail.items.product') }}</span>
-          <span role="columnheader">{{ t('orders.detail.items.quantity') }}</span>
+          <span role="columnheader">{{ t('orders.view.product') }}</span>
+          <span
+            v-if="hasMoney"
+            role="columnheader"
+            class="grid__end"
+            :title="t('orders.detail.items.price')"
+            >{{ t('orders.view.price') }}</span
+          >
+          <span role="columnheader" class="grid__mid">{{ t('orders.view.quantity') }}</span>
           <template v-if="hasMoney">
-            <span role="columnheader" class="grid__end" :title="t('orders.detail.items.price')">{{
-              t('orders.detail.items.priceColumn', { currency })
-            }}</span>
-            <span role="columnheader" class="grid__end">{{
-              t('orders.detail.items.sumColumn', { currency })
-            }}</span>
+            <span role="columnheader" class="grid__end">{{ t('orders.view.sum') }}</span>
+            <span role="columnheader" />
           </template>
         </div>
         <div
@@ -271,6 +274,9 @@ const currency = computed(() => t('common.currency'));
               {{ t('orders.detail.draft.removed') }}
             </span>
           </div>
+          <span v-if="isPriced(item)" class="line__price num" role="cell">{{
+            formatMoney(item.unitPrice)
+          }}</span>
           <div v-if="editable && isPriced(item)" class="line__edit" role="cell">
             <div class="stepper" role="group" :aria-label="item.name">
               <div class="stepper__box" :class="{ 'stepper__box--bad': isInvalid(item) }">
@@ -317,36 +323,39 @@ const currency = computed(() => t('common.currency'));
                   <StaffIcon name="plus" :size="13" />
                 </button>
               </div>
-              <button
-                v-if="quantityOf(item) === null"
-                type="button"
-                class="stepper__side"
-                :disabled="busy"
-                :aria-label="t('orders.detail.items.restore', { name: item.name })"
-                :title="t('orders.detail.items.restore', { name: item.name })"
-                @click="restore(item)"
-              >
-                <StaffIcon name="history" :size="14" />
-              </button>
-              <button
-                v-else
-                type="button"
-                class="stepper__side stepper__side--remove"
-                :disabled="busy"
-                :aria-label="t('orders.detail.items.remove', { name: item.name })"
-                :title="t('orders.detail.items.remove', { name: item.name })"
-                @click="emit('change', item, null)"
-              >
-                <StaffIcon name="x" :size="13" />
-              </button>
             </div>
           </div>
           <span v-else class="line__qty" role="cell">{{
             `${show(quantityOf(item))} ${formatUnit(item.unit)}`
           }}</span>
           <template v-if="isPriced(item)">
-            <span class="line__price num" role="cell">{{ formatMoney(item.unitPrice) }}</span>
             <span class="line__sum num" role="cell">{{ lineSum(item) }}</span>
+            <span class="line__side" role="cell">
+              <template v-if="editable">
+                <button
+                  v-if="quantityOf(item) === null"
+                  type="button"
+                  class="stepper__side"
+                  :disabled="busy"
+                  :aria-label="t('orders.detail.items.restore', { name: item.name })"
+                  :title="t('orders.detail.items.restore', { name: item.name })"
+                  @click="restore(item)"
+                >
+                  <StaffIcon name="history" :size="14" />
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="stepper__side stepper__side--remove"
+                  :disabled="busy"
+                  :aria-label="t('orders.detail.items.remove', { name: item.name })"
+                  :title="t('orders.detail.items.remove', { name: item.name })"
+                  @click="emit('change', item, null)"
+                >
+                  <StaffIcon name="trash" :size="15" />
+                </button>
+              </template>
+            </span>
           </template>
           <!-- Notes about the number sit on a row of their own under the field, so the field, the
                price and the amount stay on ONE line whether or not a note is shown. -->
@@ -383,14 +392,15 @@ const currency = computed(() => t('common.currency'));
         </div>
       </div>
 
+      <!-- The design's total: a heavy rule, "Buyurtma summasi" and the sum in large mono. -->
       <footer v-if="shownTotal !== null" class="panel__foot">
-        <span class="snapshot">
-          <StaffIcon name="lock" :size="14" class="snapshot__icon" />
-          {{ t('orders.detail.items.snapshot') }}
-        </span>
         <span class="total">
-          <span class="total__label">{{ t('orders.detail.items.total') }}</span>
+          <span class="total__label">{{ t('orders.view.orderTotal') }}</span>
           <span class="total__sum num">{{ formatMoney(shownTotal) }} {{ currency }}</span>
+        </span>
+        <span class="snapshot">
+          <StaffIcon name="lock" :size="13" class="snapshot__icon" />
+          {{ t('orders.detail.items.snapshot') }}
         </span>
       </footer>
     </section>
@@ -443,13 +453,13 @@ const currency = computed(() => t('common.currency'));
   min-width: 0;
 }
 
-/* v8 card: white, hairline ring, 12px radius; the table runs edge to edge inside it. */
+/* The design's items card: white, hairline border, 14px radius, 22px sides. */
 .panel {
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--r-card);
+  border: 1px solid var(--e8);
+  border-radius: 14px;
   background: var(--w);
-  box-shadow: inset 0 0 0 1px var(--e8);
 }
 
 .panel__head {
@@ -457,8 +467,8 @@ const currency = computed(() => t('common.currency'));
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 12px;
-  padding: 20px;
+  gap: 4px 12px;
+  padding: 14px 22px 0;
 }
 
 .panel__heading {
@@ -467,43 +477,42 @@ const currency = computed(() => t('common.currency'));
   gap: 4px;
 }
 
+/* The design draws no heading over the lines; it stays for screen readers. */
 .panel__title {
-  margin: 0;
-  font-size: var(--fs-section);
-  font-weight: 600;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
-.items__sub {
-  font-size: var(--fs-meta);
-  color: var(--t2);
-}
-
+.items__sub,
 .items__note {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-meta);
-  color: var(--t2);
+  font-size: var(--fs-small);
+  color: var(--t3);
 }
 
 .items__empty {
   margin: 0;
-  padding: 40px 20px;
-  border-top: 1px solid var(--e8);
+  padding: 40px 22px;
   text-align: center;
   font-size: var(--fs-small);
   color: var(--t2);
 }
 
-/* Columns of v8: product | quantity (| price | amount). A phone gets two rows per line instead of
-   a sideways scroll: name and amount on top, quantity and unit price under them. */
+/* Columns of the design: product | price | quantity | amount | remove. */
 .grid {
   --cols: minmax(0, 1fr) 196px;
   min-width: 0;
+  padding: 0 22px;
 }
 
 .grid--money {
-  --cols: minmax(0, 1fr) 196px 100px 110px;
+  --cols: minmax(0, 1fr) 110px 172px 120px 34px;
 }
 
 .grid__head,
@@ -513,29 +522,30 @@ const currency = computed(() => t('common.currency'));
   /* Columns only: the optional notes row under a line brings its own small distance. */
   gap: 0 12px;
   align-items: center;
-  padding: 0 20px;
-  border-top: 1px solid var(--e8);
 }
 
 .grid__head {
-  height: 40px;
-  background: var(--f5);
-  font-size: var(--fs-group);
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  padding: 14px 0 8px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--t2);
+  color: var(--t3);
 }
 
 .grid__end {
   text-align: right;
 }
 
+.grid__mid {
+  text-align: center;
+}
+
 .line {
-  min-height: 58px;
-  padding-top: 12px;
-  padding-bottom: 12px;
-  font-size: var(--fs-small);
+  min-height: 64px;
+  padding: 14px 0;
+  border-top: 1px solid var(--ef);
+  font-size: var(--fs-body);
   transition: background-color 0.2s ease;
 }
 
@@ -551,24 +561,52 @@ const currency = computed(() => t('common.currency'));
   overflow-wrap: anywhere;
 }
 
+.line__title {
+  font-size: var(--fs-section);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
 .line__code {
   font-family: var(--font-mono);
   font-size: var(--fs-group);
-  color: var(--t2);
+  color: var(--t3);
 }
 
 .line__qty {
+  justify-self: center;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+.grid--plain .line__qty {
+  justify-self: start;
+}
+
+.line__edit {
+  justify-self: center;
 }
 
 .line__price,
 .line__sum {
+  font-family: var(--font-mono);
   text-align: right;
   white-space: nowrap;
 }
 
+.line__price {
+  font-size: var(--fs-section);
+  color: var(--t2);
+}
+
 .line__sum {
+  font-size: var(--fs-section);
   font-weight: 600;
+}
+
+.line__side {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .line--removed .line__title,
@@ -588,6 +626,7 @@ const currency = computed(() => t('common.currency'));
   display: flex;
   flex-wrap: wrap;
   grid-column: 2 / -1;
+  justify-content: center;
   align-items: center;
   gap: 4px 12px;
   min-width: 0;
@@ -604,9 +643,9 @@ const currency = computed(() => t('common.currency'));
 .stepper__box {
   display: flex;
   align-items: center;
-  height: 32px;
+  height: 34px;
   overflow: hidden;
-  border-radius: var(--r-btn-sm);
+  border-radius: 9px;
   background: var(--w);
   box-shadow: inset 0 0 0 1px var(--e8);
 }
@@ -631,7 +670,7 @@ const currency = computed(() => t('common.currency'));
   height: 100%;
   padding: 0;
   border: 0;
-  background: transparent;
+  background: var(--f5);
   color: var(--ink);
   cursor: pointer;
 }
@@ -661,7 +700,8 @@ const currency = computed(() => t('common.currency'));
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-weight: 500;
   text-align: right;
   outline: none;
 }
@@ -729,39 +769,42 @@ const currency = computed(() => t('common.currency'));
 
 .panel__foot {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 22px 0;
+  padding: 16px 0 22px;
+  border-top: 2px solid var(--ink);
+}
+
+.total {
+  display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 12px 16px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--e8);
+  gap: 4px 12px;
+}
+
+.total__label {
+  font-size: var(--fs-section);
+  color: var(--t2);
+}
+
+.total__sum {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
 }
 
 .snapshot {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--fs-meta);
-  color: var(--t2);
+  color: var(--t3);
 }
 
 .snapshot__icon {
-  color: var(--acc);
-}
-
-.total {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.total__label {
-  font-size: var(--fs-body);
-  font-weight: 600;
-}
-
-.total__sum {
-  font-size: 19px;
+  color: var(--t3);
 }
 
 /* v8 unsaved-changes card: orange tint with an orange ring. */
@@ -819,47 +862,73 @@ const currency = computed(() => t('common.currency'));
   color: var(--acc-fg);
 }
 
-@media (max-width: 559px) {
+/* Phone (the design's 390 cards): name and remove on top, the price under the name, then the
+   quantity field on the left and the amount on the right. */
+@media (max-width: 599px) {
   .grid__head {
     display: none;
   }
 
+  .grid {
+    padding: 0 16px;
+  }
+
   .line {
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px 12px;
-    padding: 12px 16px;
+    grid-template-areas:
+      'name side'
+      'price price'
+      'qty sum'
+      'notes notes';
+    gap: 6px 12px;
+  }
+
+  .grid--plain .line {
+    grid-template-areas: 'name qty';
   }
 
   .line__name {
-    grid-column: 1 / -1;
+    grid-area: name;
   }
 
-  .grid--money .line__name {
-    grid-column: 1;
-  }
-
-  .grid--money .line__sum {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .line__notes {
-    grid-column: 1 / -1;
-    margin-top: 0;
+  .line__side {
+    grid-area: side;
+    align-self: start;
   }
 
   .line__price {
-    color: var(--t2);
+    grid-area: price;
+    text-align: left;
+    font-size: var(--fs-body);
   }
 
-  .line__price::before {
-    content: '× ';
+  .line__edit,
+  .grid--money .line__qty {
+    grid-area: qty;
+    justify-self: start;
   }
 
-  .panel__head,
+  .line__sum {
+    grid-area: sum;
+  }
+
+  .line__notes {
+    grid-area: notes;
+    justify-content: flex-start;
+    margin-top: 0;
+  }
+
+  .panel__head {
+    padding: 14px 16px 0;
+  }
+
   .panel__foot {
-    padding-right: 16px;
-    padding-left: 16px;
+    margin: 4px 16px 0;
+    padding-bottom: 18px;
+  }
+
+  .total__sum {
+    font-size: 22px;
   }
 }
 

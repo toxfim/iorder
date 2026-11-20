@@ -12,6 +12,7 @@ export interface SyncReportCounts {
   staleRefs: number;
   mismatches: number;
   derivedUsdCosts: number;
+  incompleteCosts: number;
   stockChanged: number;
   removalsRequested: number;
 }
@@ -28,6 +29,7 @@ export function summarizeSyncReport(report: SyncReport): SyncReportCounts {
     staleRefs: report.staleRefs.length,
     mismatches: report.mismatches.length,
     derivedUsdCosts: report.derivedUsdCosts.length,
+    incompleteCosts: report.incompleteCosts.length,
     stockChanged: report.stock.created + report.stock.updated,
     removalsRequested: report.removals.requested,
   };

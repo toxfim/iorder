@@ -9,6 +9,7 @@ export const PERMISSION_ACTIONS = [
   'BROWSE_PRICE_LIST',
   'USE_CART',
   'SUBMIT_ORDER',
+  'CREATE_ORDER_FOR_CUSTOMER',
   'VIEW_ORDER',
   'EDIT_ORDER_ITEMS',
   'CANCEL_ORDER',
@@ -73,6 +74,7 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type ContextFreeAction =
   | 'BROWSE_PRICE_LIST'
   | 'USE_CART'
+  | 'CREATE_ORDER_FOR_CUSTOMER'
   | 'MANAGER_DECIDE_ORDER'
   | 'MANAGE_ORDER_ALLOCATION'
   | 'SKIP_ACCOUNTING'
@@ -274,6 +276,11 @@ export const PERMISSION_MATRIX: Readonly<Record<PermissionAction, readonly Grant
       member('SELLER', ['SAME_ORGANIZATION']),
       viewer(['STAFF_ORDERING_ORGANIZATION']),
     ),
+
+    // [C, owner 2026-11-20] the manager creates an order on behalf of a customer from the staff
+    // app; the member it is placed for is checked against the organization in the orders service.
+    // Not the admin (management only), not the purchasing manager (read-only), nobody else.
+    CREATE_ORDER_FOR_CUSTOMER: grants(staff('MANAGER')),
 
     // Seller sees all orders of their organization [C]. Customers see their organization's
     // orders in every status, including REJECTED and CANCELLED. Warehouse and driver are

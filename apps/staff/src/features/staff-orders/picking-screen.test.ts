@@ -49,7 +49,7 @@ async function mountOrder(identity: string, number: string) {
   });
   wrappers.push(wrapper);
   await made.services.ordersStore.load();
-  await waitFor(() => expect(document.body.querySelector('.head__org')).not.toBeNull());
+  await waitFor(() => expect(document.body.querySelector('.client__name')).not.toBeNull());
   await flushPromises();
   return made;
 }

@@ -324,6 +324,25 @@ export class IdentityService {
     return this.repository.findIdsByName(search, NAME_SEARCH_LIMIT);
   }
 
+  /**
+   * For other modules (the manager's new order, inside its transaction): locks the person's row
+   * (a block takes the same lock) and answers whether it is an ACTIVE account without a staff
+   * role, so the order can be placed in their name. Not an endpoint: the caller has authorized.
+   */
+  async lockActiveCustomer(tx: Tx, userId: string): Promise<boolean> {
+    if (!(await this.repository.lockById(tx, userId))) return false;
+    const user = await this.repository.findById(userId, tx);
+    return user !== null && user.status === 'ACTIVE' && user.staffRoles.length === 0;
+  }
+
+  /**
+   * For other modules (the manager's new order, step 1): ids of people whose name or phone matches;
+   * at most `NAME_SEARCH_LIMIT`. Not an endpoint: the caller has authorized.
+   */
+  async findIdsByNameOrPhone(search: string): Promise<string[]> {
+    return this.repository.findIdsByNameOrPhone(search, NAME_SEARCH_LIMIT);
+  }
+
   // ----------------------------------------------- for the Telegram bot (no actor)
 
   /**

@@ -1,5 +1,5 @@
 /// STAFF-ONLY cost data (hard rule 7, data-model §6.2). One row PER DELIVERY LINE: the table holds
-/// ALL delivery lines of the selected suppliers (the name price_reference is historical).
+/// ALL delivery lines of the selected products («Товар_ID» list, data-model §6.4) (the name price_reference is historical).
 ///
 /// PRODUCTION GRANTS: once the two-role split exists (migrator vs application), the application
 /// role needs only SELECT, INSERT and UPDATE on this table. No DELETE, no TRUNCATE (rows are

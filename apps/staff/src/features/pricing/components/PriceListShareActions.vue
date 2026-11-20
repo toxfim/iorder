@@ -132,15 +132,6 @@ async function post(): Promise<void> {
 </script>
 
 <template>
-  <ChipMenu
-    :label="t('prices.file.download')"
-    icon="download"
-    :menu-label="t('prices.file.downloadMenu')"
-    :items="tierItems"
-    test-id="download-excel"
-    :busy="downloading"
-    @choose="download"
-  />
   <button
     v-if="props.canPost"
     type="button"
@@ -151,6 +142,15 @@ async function post(): Promise<void> {
     <StaffIcon name="send" :size="16" class="chip__icon" />
     {{ t('prices.file.post') }}
   </button>
+  <ChipMenu
+    :label="t('prices.file.download')"
+    icon="download"
+    :menu-label="t('prices.file.downloadMenu')"
+    :items="tierItems"
+    test-id="download-excel"
+    :busy="downloading"
+    @choose="download"
+  />
 
   <AppConfirmDialog
     v-if="props.canPost"

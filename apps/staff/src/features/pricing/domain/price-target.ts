@@ -26,12 +26,14 @@ export interface PriceTarget {
   readonly priceUzs: string | null;
   /** Latest delivery cost in USD, as the sheet has it (staff-only); null when unknown. */
   readonly latestCostUsd: string | null;
+  /** The product's thumbnail for the dialog header; null = no photo. */
+  readonly imageUrl: string | null;
 }
 
 export function priceTargetOf(
   // The stock rows carry no `codeGenerated`: a product the sheet has is never a generated one.
   product: Pick<PriceTarget, 'productId' | 'productCode' | 'names' | 'isActive'> &
-    Partial<Pick<PriceTarget, 'codeGenerated'>>,
+    Partial<Pick<PriceTarget, 'codeGenerated' | 'imageUrl'>>,
   row: PriceRow | null,
   latestCostUsd: string | null,
 ): PriceTarget {
@@ -55,5 +57,6 @@ export function priceTargetOf(
     alifDeferredPrice: alif?.deferredPrice ?? null,
     priceUzs: row?.uzs?.price ?? null,
     latestCostUsd,
+    imageUrl: product.imageUrl ?? null,
   };
 }

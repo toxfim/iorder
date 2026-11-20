@@ -1,4 +1,4 @@
-import type { PriceListCurrency } from '@iorder/shared';
+import type { PriceListCurrency, StaffPriceChange } from '@iorder/shared';
 import type { StaffPriceListWithRateResponse } from '@iorder/shared/staff-cost';
 import type { LocalizedName } from './localized-name';
 
@@ -47,6 +47,10 @@ export interface PriceRow {
   readonly currency: PriceListCurrency;
   /** Both prices in so'm at the current rate; null = a USD price while no rate is set. */
   readonly uzs: PriceAmounts | null;
+  /** The brand by the price list file's rule (staff choice, else the brand finder); null = none. */
+  readonly brand: string | null;
+  /** When and by whom the product's prices last changed; null when not known (not the current list). */
+  readonly lastChange: StaffPriceChange | null;
   /** The primary photo (thumb and large variant); null without one. */
   readonly imageUrl: string | null;
   readonly imageLargeUrl: string | null;
@@ -71,6 +75,8 @@ export function toPriceRows(list: StaffPriceListWithRateResponse | null): PriceR
       alifDeferredPrice: item.alifDeferredPrice,
       currency: item.currency,
       uzs: item.uzs && { price: item.uzs.basePrice, deferredPrice: item.uzs.deferredPrice },
+      brand: item.brand,
+      lastChange: item.lastChange,
       imageUrl: item.imageUrl,
       imageLargeUrl: item.imageLargeUrl,
     }))

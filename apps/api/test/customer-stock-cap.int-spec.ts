@@ -11,7 +11,12 @@ import type { Actor } from '../src/common/auth/actor.js';
 import { toStaffViewerActor } from '../src/common/auth/staff-viewer.js';
 import { CatalogModule } from '../src/modules/catalog/index.js';
 import { OrdersModule } from '../src/modules/orders/index.js';
-import { PricingModule, StaffStockService } from '../src/modules/pricing/index.js';
+import {
+  PriceListExportService,
+  PricingModule,
+  PricingService,
+  StaffStockService,
+} from '../src/modules/pricing/index.js';
 import {
   findForbiddenKeys,
   findStaffOnlyFieldsInCustomerCart,
@@ -169,7 +174,8 @@ describe('customers see the orderable stock and cannot order more (real PostgreS
       await publishPriceList(w.pricing, { [p1]: '1500.00', [p2]: '750.50', ...more }, t.prisma);
       const large = await recordSql(t.prisma, () => priceList(w.actors.sellerA));
 
-      expect((await priceList(w.actors.sellerA)).items).toHaveLength(14);
+      // P-2's sheet stock is zero (beforeEach), so it is not listed: 1 + 12 of the 14 priced.
+      expect((await priceList(w.actors.sellerA)).items).toHaveLength(13);
       expect(large.length).toBe(small.length);
     });
   });
@@ -216,9 +222,9 @@ describe('customers see the orderable stock and cannot order more (real PostgreS
       expect(
         Object.fromEntries(list.items.map((item) => [item.productCode, item.orderableStock])),
       ).toEqual({
-        // The sheet product with nothing left is out of stock; the others have NO figure. A
-        // staff-added product is never "out of stock", whatever its (planted) rows say.
-        'P-1': 0,
+        // The sheet product whose sheet stock is zero (P-1) is not listed at all [C, 2026-11-19];
+        // the others have NO figure. A staff-added product is never hidden or "out of stock",
+        // whatever its (planted) rows say.
         'P-2': 5,
         'P-NEW': null,
         'IO-000042': null,
@@ -269,11 +275,68 @@ describe('customers see the orderable stock and cannot order more (real PostgreS
     });
   });
 
+  describe('the sheet says zero: not in the price list [C, owner 2026-11-19]', () => {
+    const exportedCodes = async (): Promise<string[]> =>
+      (await t.get(PricingService).getCurrentForExport()).items.map((i) => i.product.productCode);
+
+    it('is left out of the customer list and the Excel file, and comes back with stock', async () => {
+      const { p1, p2 } = w.products;
+      await stockUp(t.prisma, p1, '4', { deliveryRef: 'REF-A' });
+      await stockUp(t.prisma, p2, '5', { deliveryRef: 'REF-B' });
+      await sheetNowSays(p1, '0');
+
+      expect(await figures(w.actors.sellerA)).toEqual({ 'P-2': 5 });
+      expect(await figures(w.actors.ownerB)).toEqual({ 'P-2': 5 });
+      const viewer = toStaffViewerActor({ userId: w.ids.manager, staffRoles: ['MANAGER'] }, null);
+      expect(await figures(viewer)).toEqual({ 'P-2': 5 });
+      expect(await exportedCodes()).toEqual(['P-2']);
+      expect((await t.get(PriceListExportService).buildCurrent('RU')).rowCount).toBe(1);
+
+      // Staff still see and price it: only what customers are offered changes.
+      const staff = await t.get(PricingService).getCurrentForStaff(w.actors.manager);
+      expect(staff.items.map((i) => i.product.productCode).sort()).toEqual(['P-1', 'P-2']);
+
+      // The next sync brings stock back: listed again, nothing to do by hand.
+      await sheetNowSays(p1, '3');
+      expect(await figures(w.actors.sellerA)).toEqual({ 'P-1': 3, 'P-2': 5 });
+      expect((await exportedCodes()).sort()).toEqual(['P-1', 'P-2']);
+    });
+
+    it('stays listed, as out of stock, while only approved orders hold the sheet stock', async () => {
+      const { p1 } = w.products;
+      await stockUp(t.prisma, p1, '5', { deliveryRef: 'REF-A' });
+      await approve((await submitOrder(w, w.actors.ownerB, { items: [[p1, '5']] })).id);
+      expect((await figures(w.actors.sellerA))['P-1']).toBe(0);
+      expect(await exportedCodes()).toContain('P-1');
+    });
+
+    it('a staff-added product and an unknown stock are never left out', async () => {
+      const { p1, p2 } = w.products;
+      await stockUnknown(p1);
+      const manual = await t.prisma.product.create({
+        data: {
+          productCode: 'IO-000044',
+          codeGenerated: true,
+          translations: { create: [{ lang: 'UZ', name: 'Buyurtma orqali' }] },
+        },
+      });
+      // A planted zero aggregate: the product's type decides, not the rows.
+      await stockUp(t.prisma, manual.id, '0', { deliveryRef: 'REF-M0' });
+      await publishPriceList(
+        w.pricing,
+        { [p1]: '1500.00', [p2]: '750.50', [manual.id]: '20.00' },
+        t.prisma,
+      );
+      expect(await figures(w.actors.sellerA)).toEqual({ 'P-1': null, 'IO-000044': null });
+      expect((await exportedCodes()).sort()).toEqual(['IO-000044', 'P-1']);
+    });
+  });
+
   describe('out of stock: a tracked product with nothing free', () => {
-    it('the sheet says zero: the figure is 0 and the product cannot enter the cart', async () => {
+    it('the sheet says zero: not listed, and the product cannot enter the cart', async () => {
       const { p1, p2 } = w.products;
       await stockUp(t.prisma, p2, '5', { deliveryRef: 'REF-A' });
-      expect(await figures(w.actors.sellerA)).toEqual({ 'P-1': 0, 'P-2': 5 });
+      expect(await figures(w.actors.sellerA)).toEqual({ 'P-2': 5 });
 
       // Not even one piece, by setting or by adding; the refusal names the figure 0.
       expectStockRefusal(await putItem(w.actors.sellerA, p1, '1'), [[p1, 0]]);
@@ -324,7 +387,8 @@ describe('customers see the orderable stock and cannot order more (real PostgreS
         ['P-1', 0, 'STOCK_EXCEEDED'],
         ['P-2', 10, null],
       ]);
-      // Still a priced product: the line keeps its prices, the order is blocked.
+      // Still a priced product: the line keeps its prices, the order is blocked. The cart reads
+      // the full list, so leaving P-1 out of the catalog does not turn the line into an unknown one.
       expect(cart.lines[0]).toMatchObject({ unitPrice: '1500.00', lineTotal: '4500.00' });
       expect(cart.canSubmit).toBe(false);
 

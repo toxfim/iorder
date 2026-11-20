@@ -58,6 +58,8 @@ function toView(row: OrganizationRow): OrganizationWithMembers {
 export interface OrganizationContactInfo {
   id: string;
   name: string;
+  type: OrganizationType;
+  label: OrganizationLabel;
   shopOwnerUserId: string | null;
 }
 
@@ -154,12 +156,16 @@ export class OrganizationsRepository {
       select: {
         id: true,
         name: true,
+        type: true,
+        label: true,
         members: { where: { role: 'SHOP_OWNER', status: 'ACTIVE' }, select: { userId: true } },
       },
     });
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
+      type: row.type,
+      label: row.label,
       shopOwnerUserId: row.members[0]?.userId ?? null,
     }));
   }
@@ -340,6 +346,48 @@ export class OrganizationsRepository {
       include: WITH_MEMBERS,
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       take: 500,
+    });
+    return rows.map(toView);
+  }
+
+  /**
+   * The organizations an order may be created for now: ACTIVE, not archived, not merged; by type and
+   * label, and by name OR by one of the given CURRENT members. `ids` limits it to those organizations.
+   */
+  async findOrderable(
+    filter: {
+      type?: OrganizationType;
+      label?: OrganizationLabel;
+      search?: { text: string; memberUserIds: readonly string[] };
+      ids?: readonly string[];
+    },
+    take: number,
+  ): Promise<OrganizationWithMembers[]> {
+    const search = filter.search;
+    const rows = await this.prisma.organization.findMany({
+      where: {
+        ...NOT_MERGED,
+        archivedAt: null,
+        status: 'ACTIVE',
+        ...(filter.ids ? { id: { in: [...filter.ids] } } : {}),
+        ...(filter.type ? { type: filter.type } : {}),
+        ...(filter.label ? { label: filter.label } : {}),
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: escapeLike(search.text), mode: 'insensitive' } },
+                {
+                  members: {
+                    some: { status: 'ACTIVE', userId: { in: [...search.memberUserIds] } },
+                  },
+                },
+              ],
+            }
+          : {}),
+      },
+      include: WITH_MEMBERS,
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take,
     });
     return rows.map(toView);
   }

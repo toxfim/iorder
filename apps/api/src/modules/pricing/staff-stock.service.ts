@@ -3,7 +3,7 @@ import { STAFF_LIST_PAGE_SIZE_DEFAULT } from '@iorder/shared/staff-cost';
 import type { Actor } from '../../common/auth/actor.js';
 import { can } from '../../common/auth/can.js';
 import { ForbiddenError } from '../../common/errors/domain-errors.js';
-import { CatalogService, type ProductWithStock } from '../catalog/index.js';
+import { BrandService, CatalogService, type ProductWithStock } from '../catalog/index.js';
 import { PriceReferenceRepository } from './price-reference.repository.js';
 import type { CostDeliverySummaryView } from './price-reference.types.js';
 import { PricingService } from './pricing.service.js';
@@ -37,6 +37,8 @@ export interface StockResult extends CategoryTotals, PageInfo {
     deliveryCount: number;
     /** Distinct suppliers of the live delivery lines, sorted. */
     suppliers: string[];
+    /** The resolved brand name (staff choice, else the brand finder); null without one. */
+    brand: string | null;
     heldQuantity: Prisma.Decimal;
     availableQuantity: Prisma.Decimal | null;
   })[];
@@ -80,6 +82,7 @@ export class StaffStockService {
     private readonly pricing: PricingService,
     private readonly deliveries: PriceReferenceRepository,
     private readonly holds: SupplyAllocationService,
+    private readonly brands: BrandService,
   ) {}
 
   /** Products with NO price in the current published list (also when none is published). */
@@ -154,7 +157,11 @@ export class StaffStockService {
         : matching.filter((entry) => (availableOfEntry(entry)?.gt(0) ?? false) === query.inStock);
     const shown = this.byCategory(stockFiltered, query.category);
     const page = this.page(shown, query);
-    const [latest, images] = await this.pageExtras(page.items);
+    // The same brand rule as the price list file, for the page's products only (two queries).
+    const [[latest, images], brandOf] = await Promise.all([
+      this.pageExtras(page.items),
+      this.brands.resolveBrands(page.items.map((entry) => entry.product)),
+    ]);
     return {
       ...countCategories(stockFiltered),
       nextCursor: page.nextCursor,
@@ -166,6 +173,7 @@ export class StaffStockService {
         isPriced: sets.published.has(entry.product.id),
         deliveryCount: counts.get(entry.product.id) ?? 0,
         suppliers: suppliers.get(entry.product.id) ?? [],
+        brand: brandOf.get(entry.product.id)?.name ?? null,
         heldQuantity: held.get(entry.product.id) ?? new Prisma.Decimal(0),
         availableQuantity: availableOfEntry(entry),
       })),

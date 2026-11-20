@@ -12,8 +12,10 @@ import {
 import { UnconfiguredDeliveryCostSource } from '../src/modules/sheets-sync/delivery-cost-source.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   FIXTURE_LINES,
   FIXTURE_RATE,
+  FIXTURE_UNSELECTED_CODES,
   fixtureLine,
   fixtureTable,
   type FixtureLine,
@@ -57,6 +59,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
       t.clock,
       t.get(SupplyRemovalService),
       new SheetSyncRunRepository(t.prisma),
+      new FixtureRowSelection(),
     );
   });
 
@@ -77,7 +80,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
     source.replaceTable(fixtureTable(lines));
 
   describe('basic behaviour', () => {
-    it('stores the lines of the selected suppliers (three for 10482), skips the others, creates the product the sheet names', async () => {
+    it('stores the lines of the selected product codes (three for 10482), skips the others, creates the product the sheet names', async () => {
       const report = await service.syncCostReference();
       expect(report).toMatchObject({
         rowsRead: 8,
@@ -88,13 +91,13 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         staleRefs: [],
         createdProducts: ['99999'],
       });
-      // Both unselected suppliers are listed, incl. the real near-miss spelling.
+      // The rows of both unselected codes are listed by supplier, incl. the real near-miss spelling.
       expect(
         report.skippedBySupplierFilter.map((s) => [s.supplier, s.reason, s.count]).sort(),
       ).toEqual(
         [
-          ['Some Other Supplier', 'SUPPLIER_NOT_SELECTED', 1],
-          ['Склад Север BM Восток F114 ECO sistem', 'SUPPLIER_NOT_SELECTED', 1],
+          ['Some Other Supplier', 'PRODUCT_NOT_SELECTED', 1],
+          ['Склад Север BM Восток F114 ECO sistem', 'PRODUCT_NOT_SELECTED', 1],
         ].sort(),
       );
       expect(await refs('10482')).toEqual(['REQ-027', 'REQ-014', 'REQ-001']);
@@ -268,27 +271,36 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
       const pending = { costUsd: '', usdRateUsed: '', costUzs: '' };
       setLines([
         fixtureLine('10482', 'REQ-P', '19.10.2026', { availableQuantity: '540', ...pending }),
-        fixtureLine('10931', 'REQ-Q', '19.10.2026', { costUsd: '', usdRateUsed: '' }), // broken
+        // Only the so'm cost written (owner 2026-11-18): stock counts, no cost kept, reported.
+        fixtureLine('10931', 'REQ-Q', '19.10.2026', {
+          availableQuantity: '7',
+          costUsd: '',
+          usdRateUsed: '',
+          costUzs: '0',
+        }),
       ]);
       const first = await service.syncCostReference();
-      expect(first).toMatchObject({ created: 1, mismatches: [] });
-      expect(first.rejected.map((r) => r.issues.map((i) => [i.path, i.message]))).toEqual([
-        [
-          ['Цена закупа $', 'Cost cells must be all filled or all empty'],
-          ['Курс на день поставки', 'Cost cells must be all filled or all empty'],
-        ],
-      ]);
+      expect(first).toMatchObject({ created: 2, mismatches: [], rejected: [] });
+      expect(first.incompleteCosts).toEqual([{ productCode: '10931', deliveryRef: 'REQ-Q' }]);
       const stored = await t.prisma.priceReference.findFirstOrThrow({
         where: { deliveryRef: 'REQ-P' },
       });
       expect(stored).toMatchObject({ costUsd: null, usdRateUsed: null, costUzs: null });
       expect(stored.availableQuantity.toFixed(3)).toBe('540.000');
       await expect(stockOf('10482')).resolves.toBe('540.000');
+      const partial = await t.prisma.priceReference.findFirstOrThrow({
+        where: { deliveryRef: 'REQ-Q' },
+      });
+      expect(partial).toMatchObject({ costUsd: null, usdRateUsed: null, costUzs: null });
+      await expect(stockOf('10931')).resolves.toBe('7.000');
 
       // The costs typed into the sheet later update the same line, audited from null.
-      setLines([fixtureLine('10482', 'REQ-P', '19.10.2026', { availableQuantity: '540' })]);
+      setLines([
+        fixtureLine('10482', 'REQ-P', '19.10.2026', { availableQuantity: '540' }),
+        fixtureLine('10931', 'REQ-Q', '19.10.2026', { availableQuantity: '7' }),
+      ]);
       const second = await service.syncCostReference();
-      expect(second).toMatchObject({ created: 0, updated: 1, mismatches: [] });
+      expect(second).toMatchObject({ created: 0, updated: 2, mismatches: [], incompleteCosts: [] });
       const filled = await t.prisma.priceReference.findFirstOrThrow({
         where: { deliveryRef: 'REQ-P' },
       });
@@ -298,6 +310,40 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
       });
       expect(audit.diff).toMatchObject({ costUsd: { from: null, to: '12.3400' } });
       await expect(stockOf('10482')).resolves.toBe('540.000');
+    });
+
+    it("stores a line with USD and so'm costs but no rate with a null rate, counts its stock, no mismatch (owner 2026-11-17)", async () => {
+      // Prod 2026-11-17: 149 OMEGA Electronics lines have «Цена закупа $» and «Цена закупа сумм» but
+      // an empty «Курс на день поставки».
+      setLines([
+        fixtureLine('10482', 'REQ-R', '19.10.2026', {
+          availableQuantity: '345',
+          costUsd: '415',
+          usdRateUsed: '',
+          costUzs: '4917750',
+        }),
+      ]);
+      const report = await service.syncCostReference();
+      expect(report).toMatchObject({ created: 1, rejected: [], mismatches: [] });
+      const stored = await t.prisma.priceReference.findFirstOrThrow({
+        where: { deliveryRef: 'REQ-R' },
+      });
+      expect(stored.usdRateUsed).toBeNull();
+      expect(stored.costUsd?.toFixed(4)).toBe('415.0000');
+      expect(stored.costUzs?.toFixed(2)).toBe('4917750.00');
+      await expect(stockOf('10482')).resolves.toBe('345.000');
+    });
+
+    it("the database still refuses a rate without costs and a USD cost without a so'm cost", async () => {
+      setLines([fixtureLine('10482', 'REQ-S', '19.10.2026')]);
+      await service.syncCostReference();
+      const where = { deliveryRef: 'REQ-S' };
+      await expect(
+        t.prisma.priceReference.updateMany({ where, data: { costUsd: null, costUzs: null } }),
+      ).rejects.toThrow();
+      await expect(
+        t.prisma.priceReference.updateMany({ where, data: { costUzs: null, usdRateUsed: null } }),
+      ).rejects.toThrow();
     });
 
     it('rejects a repeated product code + delivery within one read (first wins), whatever the code case', async () => {
@@ -496,6 +542,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         t.clock,
         t.get(SupplyRemovalService),
         new SheetSyncRunRepository(t.prisma),
+        new FixtureRowSelection(),
       );
       await expect(unconfigured.syncCostReference()).rejects.toThrow(/No delivery cost source/);
     });
@@ -538,39 +585,90 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
     });
   });
 
-  describe('supplier filter', () => {
-    it('Beta system tm fbs: every date is stored, any casing', async () => {
+  describe('product code selection', () => {
+    // Rows are chosen by «Товар_ID» only [C, owner 2026-11-17]; the supplier no longer decides.
+    const serviceSkipping = (unselected: readonly string[]): SheetsSyncService =>
+      new SheetsSyncService(
+        source,
+        t.get(CatalogService),
+        t.get(PriceReferenceService),
+        t.clock,
+        t.get(SupplyRemovalService),
+        new SheetSyncRunRepository(t.prisma),
+        new FixtureRowSelection(unselected),
+      );
+
+    it('every row of a listed product is stored, whatever its supplier; its stock is their sum', async () => {
       setLines([
-        fixtureLine('10482', 'A', '27.12.2025', { supplier: 'Beta system tm fbs' }),
-        fixtureLine('10482', 'B', '31/08/2026 23:59:59', { supplier: 'Beta system tm fbs' }),
-        fixtureLine('10482', 'C', '15.10.2026', { supplier: 'BETA SYSTEM TM FBS' }),
-        fixtureLine('10482', 'D', '01.08.2020', { supplier: 'alpha trade import' }),
+        fixtureLine('10482', 'A', '27.12.2025', {
+          supplier: 'OMEGA Electronics',
+          availableQuantity: '10',
+        }),
+        fixtureLine('10482', 'B', '31/08/2026 23:59:59', {
+          supplier: 'Uzum Возврат (FBO)',
+          availableQuantity: '2',
+        }),
+        fixtureLine('10482', 'C', '15.10.2026', {
+          supplier: 'инвентаризация 2026 январь',
+          availableQuantity: '0.5',
+        }),
       ]);
       const report = await service.syncCostReference();
-      expect(report).toMatchObject({ rowsRead: 4, created: 4, rejected: [] });
+      expect(report).toMatchObject({ rowsRead: 3, created: 3, rejected: [] });
       expect(report.skippedBySupplierFilter).toEqual([]);
-      expect((await refs('10482')).sort()).toEqual(['A', 'B', 'C', 'D']);
+      expect((await refs('10482')).sort()).toEqual(['A', 'B', 'C']);
+      const suppliers = (
+        await t.prisma.priceReference.findMany({ where: { productId: ids['10482'] } })
+      )
+        .map((r) => r.supplier)
+        .sort();
+      expect(suppliers).toEqual(
+        ['OMEGA Electronics', 'Uzum Возврат (FBO)', 'инвентаризация 2026 январь'].sort(),
+      );
+      expect(await stockOf('10482')).toBe('12.500');
     });
 
-    it('partial supplier names are skipped without validation noise', async () => {
+    it('rows of an unselected code are skipped without validation noise, counted per supplier (case merged, whitespace collapsed)', async () => {
       setLines([
-        fixtureLine('10482', 'A', '12.10.2026', { supplier: 'alpha trade import 2' }),
-        // Garbage everywhere, but not a selected supplier: skipped, not rejected.
-        { ...fixtureLine('10482', 'B', 'garbage'), supplier: 'someone else', costUsd: 'x' },
-        fixtureLine('10482', 'C', '12.10.2026'),
+        // Garbage everywhere, but not a selected code: skipped, not rejected.
+        {
+          ...fixtureLine('77777', 'A', 'garbage'),
+          supplier: 'Foo  Trading',
+          costUsd: 'x',
+          availableQuantity: '-3',
+        },
+        fixtureLine('20001', 'B', '12.10.2026', { supplier: 'foo trading' }),
+        fixtureLine('20002', 'C', '12.10.2026', { supplier: ' Foo Trading ' }),
+        fixtureLine('77777', 'D', '12.10.2026', { supplier: 'Bar' }),
+        // The same supplier on a listed code is read.
+        fixtureLine('10482', 'E', '12.10.2026', { supplier: 'Bar' }),
       ]);
-      const report = await service.syncCostReference();
-      expect(report).toMatchObject({ created: 1, rejected: [] });
-      expect(report.skippedBySupplierFilter.map((s) => [s.supplier, s.count])).toEqual([
-        ['alpha trade import 2', 1],
-        ['someone else', 1],
+      const report = await serviceSkipping(['20001', '20002', '77777']).syncCostReference();
+      expect(report).toMatchObject({ rowsRead: 5, created: 1, rejected: [], createdProducts: [] });
+      expect(report.skippedBySupplierFilter).toEqual([
+        {
+          supplier: 'Foo Trading',
+          reason: 'PRODUCT_NOT_SELECTED',
+          count: 3,
+          hasInvisibleCharacters: false,
+        },
+        {
+          supplier: 'Bar',
+          reason: 'PRODUCT_NOT_SELECTED',
+          count: 1,
+          hasInvisibleCharacters: false,
+        },
       ]);
+      expect(await refs('10482')).toEqual(['E']);
+      await expect(
+        t.prisma.product.count({ where: { productCode: { in: ['20001', '20002', '77777'] } } }),
+      ).resolves.toBe(0);
     });
 
-    it('a selected supplier with an unparsable date is REJECTED, not skipped, not stored', async () => {
+    it('a selected row with an unparsable date is REJECTED, not skipped, not stored', async () => {
       setLines([
-        fixtureLine('10482', 'A', '1 September', { supplier: 'Beta system tm fbs' }),
-        fixtureLine('10482', 'B', '', { supplier: 'alpha trade import' }),
+        fixtureLine('10482', 'A', '1 September', { supplier: 'Uzum Возврат (FBO)' }),
+        fixtureLine('10931', 'B', ''),
       ]);
       const report = await service.syncCostReference();
       expect(report.skippedBySupplierFilter).toEqual([]);
@@ -578,16 +676,16 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
       await expect(t.prisma.priceReference.count()).resolves.toBe(0);
     });
 
-    it('supplier typos are visible: each look-alike shows up as its own report entry, nothing is stored', async () => {
+    it('supplier look-alikes of skipped rows stay visible: each its own report entry, an invisible character flagged', async () => {
       const typos = [
         'alpha trade import.', // trailing dot
-        'alpha trade\u200b import', // zero-width space
-        '\u0435\u0441\u043e xiaomi import', // Cyrillic е с о
-        '\uff45\uff43\uff4f xiaomi import', // fullwidth e c o
+        'alpha trade​ import', // zero-width space
+        'есо xiaomi import', // Cyrillic е с о
+        'ｅｃｏ xiaomi import', // fullwidth e c o
         'eco-xiaomi-import',
       ];
       setLines(
-        typos.map((supplier, i) => fixtureLine('10482', `T-${i}`, '12.10.2026', { supplier })),
+        typos.map((supplier, i) => fixtureLine('20001', `T-${i}`, '12.10.2026', { supplier })),
       );
       const report = await service.syncCostReference();
       expect(report.skippedBySupplierFilter).toHaveLength(5);
@@ -596,44 +694,16 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         expect(report.skippedBySupplierFilter.map((s) => s.supplier)).toContain(typo);
       }
       expect(report.skippedBySupplierFilter.every((s) => s.count === 1)).toBe(true);
-      expect(
-        report.skippedBySupplierFilter.every((s) => s.reason === 'SUPPLIER_NOT_SELECTED'),
-      ).toBe(true);
-      const zeroWidth = report.skippedBySupplierFilter.find((s) => s.supplier.includes('\u200b'));
+      expect(report.skippedBySupplierFilter.every((s) => s.reason === 'PRODUCT_NOT_SELECTED')).toBe(
+        true,
+      );
+      const zeroWidth = report.skippedBySupplierFilter.find((s) => s.supplier.includes('​'));
       expect(zeroWidth?.hasInvisibleCharacters).toBe(true);
       expect(report.skippedBySupplierFilter.filter((s) => s.hasInvisibleCharacters)).toHaveLength(
         1,
       );
       expect(report.created).toBe(0);
       await expect(t.prisma.priceReference.count()).resolves.toBe(0);
-    });
-
-    it('skipped suppliers are counted per distinct normalized value (case merged, whitespace collapsed)', async () => {
-      setLines([
-        fixtureLine('10482', 'A', '12.10.2026', { supplier: 'Foo  Trading' }),
-        fixtureLine('10482', 'B', '12.10.2026', { supplier: 'foo trading' }),
-        fixtureLine('10482', 'C', '12.10.2026', { supplier: ' Foo Trading ' }),
-        fixtureLine('10482', 'D', '12.10.2026', { supplier: 'Bar' }),
-        fixtureLine('10482', 'E', '12.10.2026', {
-          supplier: 'Beta system tm fbs',
-          deliveredAt: '31/08/2026 23:59:59',
-        }),
-      ]);
-      const report = await service.syncCostReference();
-      expect(report.skippedBySupplierFilter).toEqual([
-        {
-          supplier: 'Foo Trading',
-          reason: 'SUPPLIER_NOT_SELECTED',
-          count: 3,
-          hasInvisibleCharacters: false,
-        },
-        {
-          supplier: 'Bar',
-          reason: 'SUPPLIER_NOT_SELECTED',
-          count: 1,
-          hasInvisibleCharacters: false,
-        },
-      ]);
     });
 
     describe('a row with UZS cost but no USD cost and no rate', () => {
@@ -696,16 +766,20 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         expect(row.usdRateUsed?.toFixed(4)).toBe('11850.0000');
       });
 
-      it('no rate anywhere in the sheet: still REJECTED; no UZS cost either: stored as cost pending', async () => {
+      it('no rate anywhere in the sheet: stored as cost pending and reported (2026-11-18); no UZS cost either: cost pending too', async () => {
         source.replaceTable(
           fixtureTable([
             { ...fixtureLine('10482', 'A', '25.09.2026', { costUzs: '1185000' }), ...blankCost },
           ]),
         );
+        // Nothing to derive the USD cost from: the so'm cost alone is not kept (owner 2026-11-18);
+        // the line counts for stock and the report names it so the sheet can be fixed.
         const noRate = await service.syncCostReference();
-        expect(noRate.rejected.map((r) => r.issues.map((i) => i.path))).toEqual([
-          ['Цена закупа $', 'Курс на день поставки'],
-        ]);
+        expect(noRate.rejected).toEqual([]);
+        expect(noRate.incompleteCosts).toEqual([{ productCode: '10482', deliveryRef: 'A' }]);
+        await expect(
+          t.prisma.priceReference.findFirstOrThrow({ where: { deliveryRef: 'A' } }),
+        ).resolves.toMatchObject({ costUsd: null, usdRateUsed: null, costUzs: null });
 
         source.replaceTable(
           fixtureTable([
@@ -726,16 +800,20 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
       });
     });
 
-    it('lines of unselected suppliers are never stored, not even as audit or report content', async () => {
+    it('lines of unselected product codes are never stored, not even as audit or report content', async () => {
       const report = await service.syncCostReference();
       expect(await t.prisma.priceReference.count({ where: { deliveryRef: 'REQ-500' } })).toBe(0);
-      // The report MAY name unselected suppliers (staff-only; that is how typos become visible) but
-      // they are never stored anywhere.
+      await expect(
+        t.prisma.product.count({ where: { productCode: { in: [...FIXTURE_UNSELECTED_CODES] } } }),
+      ).resolves.toBe(0);
+      // The report MAY name the suppliers of skipped rows (staff-only; that is how look-alikes
+      // become visible) but they are never stored anywhere.
       const stored = JSON.stringify([
         await t.prisma.priceReference.findMany(),
         await t.prisma.auditLog.findMany(),
       ]);
       expect(stored).not.toContain('Some Other Supplier');
+      expect(stored).not.toContain('REQ-500');
       expect(report.skippedBySupplierFilter.map((s) => s.supplier)).toContain(
         'Some Other Supplier',
       );
@@ -785,7 +863,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
           syncedAt: new Date('2026-01-01T00:00:00Z'),
         },
       });
-      // 20001's lines belong to an unselected supplier (skipped); a re-sync must leave it alone.
+      // 20001 is not a selected product code (its lines are skipped); a re-sync must leave it alone.
       await service.syncCostReference();
       const row = await t.prisma.stockCache.findUniqueOrThrow({
         where: { productId: untouched.id },
@@ -934,6 +1012,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         t.clock,
         t.get(SupplyRemovalService),
         new SheetSyncRunRepository(t.prisma),
+        new FixtureRowSelection(),
       );
 
       const error = await failing.syncCostReference().then(
@@ -986,6 +1065,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         t.clock,
         t.get(SupplyRemovalService),
         new SheetSyncRunRepository(t.prisma),
+        new FixtureRowSelection(),
       );
     }
 
@@ -1075,6 +1155,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
           t.clock,
           t.get(SupplyRemovalService),
           new SheetSyncRunRepository(t.prisma),
+          new FixtureRowSelection(),
         );
       };
       const [a, b] = await Promise.all([make().syncCostReference(), make().syncCostReference()]);
@@ -1110,7 +1191,7 @@ describe('sheet supplies sync with a fake source (real PostgreSQL)', () => {
         '165721',
         '999999',
         '12650',
-        'alpha trade import', // a selected supplier's name is not report content
+        'alpha trade import', // the supplier of a read row is not report content
         'Безнал',
         'Смартфоны',
       ]) {

@@ -6,7 +6,13 @@ import {
   staffOrderListResponseSchema,
   staffOrderSchema,
   allocationPreviewSchema,
+  newOrderCatalogResponseSchema,
+  newOrderCustomersResponseSchema,
   type AllocationPreview,
+  type CreateStaffOrderRequest,
+  type NewOrderCatalogResponse,
+  type NewOrderCustomerQuery,
+  type NewOrderCustomersResponse,
   type SetOrderAllocationsRequest,
   type ApproveOrderRequest,
   type EditOrderItemsRequest,
@@ -40,6 +46,18 @@ export interface StaffOrdersApi {
   listOrders: (query?: StaffOrderListQuery) => Promise<StaffOrderListResponse>;
   /** Matching orders per status over the list's filters (the stage tabs, the count and sum). */
   countOrders: (query?: StaffOrderCountsQuery) => Promise<StaffOrderCountsResponse>;
+  /**
+   * The manager's new order [C, owner 2026-11-20], step 1: ACTIVE organizations by name, member name
+   * or phone, type and label, with their current members; `recent` = the «Oxirgi mijozlar» chips.
+   */
+  listNewOrderCustomers: (query?: NewOrderCustomerQuery) => Promise<NewOrderCustomersResponse>;
+  /** Step 2: what the organization may order, at its price tier, with the free stock as a hint. */
+  getNewOrderCatalog: (organizationId: string) => Promise<NewOrderCatalogResponse>;
+  /**
+   * Step 4: creates the SUBMITTED order. `idempotencyKey` is new per attempt of one order: a retry
+   * with the same key returns the same order.
+   */
+  createOrder: (request: CreateStaffOrderRequest, idempotencyKey: string) => Promise<StaffOrder>;
   /** 404 for an order the role may not see. */
   getOrder: (orderId: string) => Promise<StaffOrder>;
   getTimeline: (orderId: string) => Promise<TimelineResponse>;
@@ -135,6 +153,19 @@ export function createHttpStaffOrdersApi(http: HttpClient): StaffOrdersApi {
           groupBy: query.groupBy,
         },
       }),
+    listNewOrderCustomers: (query = {}) =>
+      http.request(STAFF_ORDER_ROUTES.listNewOrderCustomers, newOrderCustomersResponseSchema, {
+        query: { search: query.search, type: query.type, label: query.label },
+      }),
+    getNewOrderCatalog: (organizationId) =>
+      http.request(STAFF_ORDER_ROUTES.getNewOrderCatalog, newOrderCatalogResponseSchema, {
+        query: { organizationId },
+      }),
+    createOrder: (request, idempotencyKey) =>
+      http.request(STAFF_ORDER_ROUTES.createOrder, staffOrderSchema, {
+        body: request,
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
     getOrder: (orderId) =>
       http.request(STAFF_ORDER_ROUTES.getOrder, staffOrderSchema, { params: { id: orderId } }),
     getTimeline: (orderId) =>
@@ -187,6 +218,7 @@ function filterQuery(
 ): Record<string, string | undefined> {
   return {
     paymentStatus: query.paymentStatus,
+    paymentPlan: query.paymentPlan,
     organizationId: query.organizationId,
     placedByUserId: query.placedByUserId,
     period: query.period,

@@ -132,6 +132,7 @@ describe('staff product views', () => {
           isPriced: true,
           deliveryCount: 2,
           suppliers: ['alpha trade import'],
+          brand: 'Xiaomi',
         },
       ],
       categories: [],
@@ -156,10 +157,17 @@ describe('staff product views', () => {
             isPriced: true,
             deliveryCount: 2,
             suppliers: [],
+            brand: null,
           },
         ],
       }).success,
     ).toBe(true);
+    // The brand is required too (null without one).
+    const { brand: _brand, ...withoutBrand } = stock.items[0] ?? {};
+    void _brand;
+    expect(stockOverviewResponseSchema.safeParse({ ...stock, items: [withoutBrand] }).success).toBe(
+      false,
+    );
     expect(
       stockOverviewResponseSchema.safeParse({
         ...stock,

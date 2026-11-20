@@ -14,6 +14,7 @@ import {
 } from '../src/modules/pricing/index.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   FIXTURE_LINES,
   fixtureTable,
 } from '../src/modules/sheets-sync/fake-delivery-cost-source.js';
@@ -64,6 +65,7 @@ describe('manager confirmation when a sheet line disappears (real PostgreSQL)', 
       t.clock,
       t.get(SupplyRemovalService),
       new SheetSyncRunRepository(t.prisma),
+      new FixtureRowSelection(),
     );
     await sync.syncCostReference();
   });

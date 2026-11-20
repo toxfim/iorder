@@ -4,7 +4,13 @@ import type { DbClient, Tx } from '../../common/database/db-client.js';
 import { PrismaService } from '../../common/database/prisma.service.js';
 import { runInTransaction } from '../../common/database/transaction.js';
 import type { Prisma } from '../../generated/prisma/client.js';
-import type { ItemPrices, ItemView, VersionSummaryView, VersionView } from './pricing.types.js';
+import type {
+  ItemPrices,
+  ItemView,
+  LastPriceChange,
+  VersionSummaryView,
+  VersionView,
+} from './pricing.types.js';
 import type { PriceAtVersion } from './price-history.js';
 import type { VersionStatus } from './version-status.js';
 
@@ -129,6 +135,58 @@ export class PricingRepository {
       published: rows.filter((r) => r.status === 'PUBLISHED').map((r) => r.productId),
       draft: rows.filter((r) => r.status === 'DRAFT').map((r) => r.productId),
     };
+  }
+
+  /**
+   * For every product of the given (published) version: the latest version up to it in which one
+   * of its prices (every tier, RRP, the currency) differs from the version published just before,
+   * or in which it (re)entered the list. One statement for the whole list: versions are ranked by
+   * publication time, and a product row is a change when its previous row is missing, not in the
+   * version right before, or holds other prices. Versions published later are left out, so the
+   * answer for one version never changes (the service caches it per version).
+   */
+  async findLastPriceChanges(versionId: string): Promise<Map<string, LastPriceChange>> {
+    const rows = await this.prisma.$queryRaw<
+      { productId: string; versionNumber: number; publishedAt: Date; publishedBy: string | null }[]
+    >`
+      WITH v AS (
+        SELECT id, number, published_at, published_by,
+               ROW_NUMBER() OVER (ORDER BY published_at, number) AS ord
+        FROM price_list_versions
+        WHERE status IN ('PUBLISHED', 'ARCHIVED') AND published_at IS NOT NULL
+          AND (published_at, number) <= (
+            SELECT published_at, number FROM price_list_versions WHERE id = ${versionId}::uuid)
+      ),
+      r AS (
+        SELECT i.product_id, v.ord, v.number, v.published_at, v.published_by,
+               ROW(i.base_price, i.deferred_price, i.rrp, i.wholesale_price,
+                   i.wholesale_deferred_price, i.alif_price, i.alif_deferred_price, i.currency)
+                 AS prices,
+               LAG(v.ord) OVER w AS prev_ord,
+               LAG(ROW(i.base_price, i.deferred_price, i.rrp, i.wholesale_price,
+                       i.wholesale_deferred_price, i.alif_price, i.alif_deferred_price, i.currency))
+                 OVER w AS prev_prices
+        FROM price_list_items i JOIN v ON v.id = i.version_id
+        WINDOW w AS (PARTITION BY i.product_id ORDER BY v.ord)
+      )
+      SELECT DISTINCT ON (r.product_id)
+             r.product_id AS "productId", r.number AS "versionNumber",
+             r.published_at AS "publishedAt", r.published_by AS "publishedBy"
+      FROM r
+      WHERE (r.prev_ord IS NULL OR r.ord - r.prev_ord > 1 OR r.prices IS DISTINCT FROM r.prev_prices)
+        AND r.product_id IN (
+          SELECT pi.product_id FROM price_list_items pi WHERE pi.version_id = ${versionId}::uuid)
+      ORDER BY r.product_id, r.ord DESC`;
+    return new Map(
+      rows.map((row) => [
+        row.productId,
+        {
+          versionNumber: Number(row.versionNumber),
+          publishedAt: row.publishedAt,
+          publishedBy: row.publishedBy,
+        },
+      ]),
+    );
   }
 
   async findItemPricesByVersion(productId: string): Promise<Map<string, PriceAtVersion>> {

@@ -19,6 +19,7 @@ import {
 } from '../src/modules/pricing/index.js';
 import {
   FakeDeliveryCostSource,
+  FixtureRowSelection,
   fixtureLine,
   fixtureTable,
   type FixtureLine,
@@ -87,6 +88,7 @@ describe('products created from the sheet, unpriced and stock lists (real Postgr
       t.clock,
       t.get(SupplyRemovalService),
       t.get(SheetSyncRunRepository),
+      new FixtureRowSelection(),
     ).syncCostReference();
 
   const productByCode = (productCode: string) =>
@@ -597,6 +599,17 @@ describe('products created from the sheet, unpriced and stock lists (real Postgr
       // The distinct suppliers of the live lines (the staff supplier filter, 2026-11-13).
       expect(byCode['SHEET-1']?.suppliers).toEqual(['alpha trade import']);
       expect(byCode['SHEET-1']?.latestDelivery?.deliveredAt).toBe('2026-10-11T04:15:00.000Z');
+    });
+
+    it('gives each row its brand by the price list file rule: found in the name, else null', async () => {
+      await sync([
+        fixtureLine('BRANDED', 'R-1', '10.10.2026', { productName: 'Смартфон Xiaomi Redmi 15' }),
+        fixtureLine('PLAIN', 'R-2', '10.10.2026', { productName: 'Кабель USB-C 1 м' }),
+      ]);
+      const parsed = stockOverviewResponseSchema.parse((await call('GET', '/staff/stock')).body);
+      const byCode = Object.fromEntries(parsed.items.map((i) => [i.productCode, i]));
+      expect(byCode.BRANDED?.brand).toBe('Xiaomi');
+      expect(byCode.PLAIN?.brand).toBeNull();
     });
 
     it('gives the primary photo URLs on stock, unpriced and staff price list rows', async () => {

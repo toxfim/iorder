@@ -13,7 +13,7 @@ import {
 import { PIECE_UNIT, commonProductName } from '@iorder/shared';
 import { Prisma } from '../../generated/prisma/client.js';
 import { CatalogService } from '../catalog/index.js';
-import { PricingService, type OrderableStock } from '../pricing/index.js';
+import { PricingService, type OrderableStock, type PriceListView } from '../pricing/index.js';
 import { MAX_QUANTITY, parseQuantity, sumAmounts, lineTotal } from './order-lines.js';
 import { orderabilityProblem, type PriceBook, type PriceBookEntry } from './order-pricing.js';
 import { exceedsStock, stockLimitExceeded, stockLimitOf } from './stock-limit.js';
@@ -143,34 +143,15 @@ export class CartService {
    * publish that happens right after still leaves a consistent (older) snapshot.
    */
   async loadPriceBook(actor: Actor): Promise<PriceBook | null> {
-    let list;
-    try {
-      list = await this.pricing.getCurrentForCustomer(actor);
-    } catch (error) {
-      if (error instanceof NotFoundError) return null;
-      throw error;
-    }
-    return {
-      versionId: list.version.id,
-      versionNumber: list.version.number,
-      // The customer view is always resolved to one tier; STANDARD is only the type's fallback.
-      priceTier: list.priceTier ?? 'STANDARD',
-      usdRate: list.usdRate,
-      entries: new Map(
-        list.items.map((item) => [
-          item.product.id,
-          {
-            product: item.product,
-            unitPrice: item.basePrice,
-            deferredUnitPrice: item.deferredPrice,
-            fullUnitPriceUsd: item.usd?.basePrice ?? null,
-            deferredUnitPriceUsd: item.usd?.deferredPrice ?? null,
-            // Already in UZS: the customer list converts every price the same way.
-            rrp: item.rrp,
-          },
-        ]),
-      ),
-    };
+    return toPriceBook(() => this.pricing.getCurrentForCustomer(actor));
+  }
+
+  /**
+   * The book of the manager's new order [C, owner 2026-11-20]: the organization's catalog at its
+   * tier (what step 2 offers), or null while nothing is published. The caller has authorized.
+   */
+  loadPriceBookForOrganization(organizationId: string): Promise<PriceBook | null> {
+    return toPriceBook(() => this.pricing.getCatalogForOrganization(organizationId));
   }
 
   /**
@@ -317,4 +298,36 @@ export class CartService {
       canSubmit: lines.length > 0 && submittable.length === lines.length,
     };
   }
+}
+
+/** A price list read as a lookup by product id; null while nothing is published. */
+async function toPriceBook(read: () => Promise<PriceListView>): Promise<PriceBook | null> {
+  let list: PriceListView;
+  try {
+    list = await read();
+  } catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw error;
+  }
+  return {
+    versionId: list.version.id,
+    versionNumber: list.version.number,
+    // The customer view is always resolved to one tier; STANDARD is only the type's fallback.
+    priceTier: list.priceTier ?? 'STANDARD',
+    usdRate: list.usdRate,
+    entries: new Map(
+      list.items.map((item) => [
+        item.product.id,
+        {
+          product: item.product,
+          unitPrice: item.basePrice,
+          deferredUnitPrice: item.deferredPrice,
+          fullUnitPriceUsd: item.usd?.basePrice ?? null,
+          deferredUnitPriceUsd: item.usd?.deferredPrice ?? null,
+          // Already in UZS: the customer list converts every price the same way.
+          rrp: item.rrp,
+        },
+      ]),
+    ),
+  };
 }

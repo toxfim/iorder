@@ -81,13 +81,20 @@ import {
 } from './order-notifications.js';
 import { OrderItemAllocationsService } from './order-item-allocations.service.js';
 import { formatOrderNumber } from './order-number.js';
-import { orderTotalUsd, priceItems, repriceForPlan, type SnapshotLine } from './order-pricing.js';
+import {
+  orderTotalUsd,
+  priceItems,
+  repriceForPlan,
+  type PriceBook,
+  type SnapshotLine,
+} from './order-pricing.js';
 import { linesOverStock, stockLimitExceeded } from './stock-limit.js';
 import {
   decideTransition,
   isAtOrBeyond,
   mayEverMoveTo,
   permissionFor,
+  type WorkflowRole,
 } from './order-state-machine.js';
 import {
   OrdersRepository,
@@ -117,7 +124,12 @@ import {
   type SetAllocationsCommand,
   type TransitionCommand,
 } from './orders.schemas.js';
-import type { AllocationPreview, AllocationRequestRow } from '@iorder/shared/staff-orders';
+import {
+  createStaffOrderRequestSchema,
+  type AllocationPreview,
+  type AllocationRequestRow,
+  type CreateStaffOrderRequest,
+} from '@iorder/shared/staff-orders';
 import type { OrderPage, OrderView, PaymentPlanChangeOffer } from './order.views.js';
 import { paymentPlanChangeWindowMs } from './payment-plan.settings.js';
 import { OrganizationPaymentsService } from './organization-payments.service.js';
@@ -299,127 +311,23 @@ export class OrdersService {
         const items = await this.repository.findCartItemsLocked(tx, cartId);
         if (items.length === 0) throw new ConflictError('The cart is empty', 'EMPTY_CART');
 
-        const priced = priceItems(book, items, paymentPlan);
-        if (priced.unorderableProductIds.length > 0) {
-          throw new ConflictError(
-            'Some products in the cart cannot be ordered right now',
-            'PRODUCT_NOT_ORDERABLE',
-            { productIds: priced.unorderableProductIds },
-          );
-        }
-        // Checked on the list read just above: a price removed after the customer saw the cart
-        // refuses the order instead of pricing it at something they did not choose.
-        if (priced.missingDeferredProductIds.length > 0) {
-          throw this.deferredUnavailable(priced.missingDeferredProductIds);
-        }
-        // Read here, after the locks, like the book: a quantity the cart would refuse now is
-        // refused here too [C, 2026-11-09]. Nothing is reserved by passing (hard rule 10): the
-        // manager's allocation at approval settles two orders for the same last pieces.
-        const overStock = linesOverStock(
-          items,
-          await this.carts.loadOrderableStock(
-            book,
-            items.map((item) => item.productId),
-          ),
-        );
-        if (overStock.length > 0) throw stockLimitExceeded(overStock);
-        // The debt is counted in USD at this rate: an order with an unknown debt is never stored.
-        // The rate comes from the read that priced the order, so a rate set a moment later cannot
-        // disagree with the so'm prices.
-        if (book.usdRate === null) {
-          throw new ConflictError(
-            'The order cannot be converted right now',
-            'CURRENCY_CONVERSION_UNAVAILABLE',
-          );
-        }
-        const totalUsd = orderTotalUsd(priced.lines, paymentPlan, book.usdRate);
-        if (!fitsMoney(priced.total) || !fitsUsd(totalUsd)) {
-          throw new InputValidationError([
-            { path: 'cart', message: 'The order total is too large' },
-          ]);
-        }
-
-        // Nothing was written yet, so the refusal leaves the cart as it is.
-        if (!priced.total.equals(expectedTotalAmount)) {
-          throw new ConflictError(
-            'The total changed after the cart was read',
-            'CART_TOTAL_CHANGED',
-            { currentTotalAmount: formatAmount(priced.total) },
-          );
-        }
-
-        const orderNumber = formatOrderNumber(await this.repository.nextOrderSequence(tx));
-        const order = await this.repository.createOrder(tx, {
-          orderNumber,
-          organizationId: ownOrganizationId,
-          placedByUserId: actor.userId,
-          priceListVersionId: book.versionId,
-          // The tier the lines were priced with (hard rule 4: a later label change never alters it).
-          priceTier: book.priceTier,
-          idempotencyKey: key,
-          paymentPlan,
-          totalAmount: priced.total,
-          usdRate: book.usdRate,
-          totalUsd,
-          customerComment: null,
-          now,
-          items: priced.lines.map((line) => ({
-            productId: line.productId,
-            productCodeSnapshot: line.productCode,
-            nameSnapshot: line.name,
-            unitSnapshot: line.unit,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            lineTotal: line.lineTotal,
-            fullUnitPrice: line.fullUnitPrice,
-            deferredUnitPrice: line.deferredUnitPrice,
-            fullUnitPriceUsd: line.fullUnitPriceUsd,
-            deferredUnitPriceUsd: line.deferredUnitPriceUsd,
-          })),
-        });
         const actorRole = submitterRoleOf(actor);
         if (actorRole === undefined) throw new ForbiddenError('Access denied');
-
-        const [submittedEventId] = await this.repository.insertEvents(tx, [
-          {
-            orderId: order.id,
-            eventType: 'SUBMITTED',
-            fromStatus: null,
-            toStatus: 'SUBMITTED',
-            actorUserId: actor.userId,
-            actorRole,
-            comment: null,
-            payload: {
-              before: null,
-              after: {
-                status: 'SUBMITTED',
-                orderNumber,
-                priceListVersionId: book.versionId,
-                priceTier: book.priceTier,
-                paymentPlan,
-                totalAmount: formatAmount(order.totalAmount),
-                usdRate: order.usdRate.toFixed(4),
-                totalUsd: formatUsdExact(order.totalUsd),
-                lines: priced.lines.map(snapshotPayloadLine),
-              },
-            },
-            createdAt: now,
-          },
-        ]);
-        const submitContext = this.notificationContext(order, actor, actorRole, null);
-        const purchasingRow = buildPurchasingNotification(
-          'ORDER_SUBMITTED',
-          submitContext,
-          await this.purchasingFacts(tx, order.items),
-        );
-        await this.repository.insertOutbox(
-          tx,
-          [
-            ...buildSubmittedNotifications(submitContext),
-            ...(purchasingRow === null ? [] : [purchasingRow]),
-          ].map((row) => ({ ...row, orderEventId: requireId(submittedEventId) })),
+        const order = await this.writeSubmittedOrder(tx, {
+          actor,
+          actorRole,
+          organizationId: ownOrganizationId,
+          placedByUserId: actor.userId,
+          idempotencyKey: key,
+          paymentPlan,
+          expectedTotalAmount,
+          book,
+          items,
+          customerComment: null,
+          capByStock: true,
+          onBehalfOf: false,
           now,
-        );
+        });
         await this.repository.clearCart(tx, cartId, now);
         return order;
       });
@@ -432,6 +340,277 @@ export class OrdersService {
       }
       throw error;
     }
+  }
+
+  /**
+   * The order a submit writes, inside the caller's transaction: priced from `book` at the plan's
+   * prices (both snapshots kept), the frozen USD rate, the SUBMITTED event and the staff outbox rows,
+   * all in this one transaction (hard rules 2, 4, 12). Shared by the customer's submit and the
+   * manager's order on a customer's behalf, so the two can never price or announce differently.
+   * Nothing is reserved (hard rule 10): holds come with the manager's approval.
+   */
+  private async writeSubmittedOrder(
+    tx: Tx,
+    input: {
+      actor: Actor;
+      actorRole: WorkflowRole;
+      organizationId: string;
+      placedByUserId: string;
+      idempotencyKey: string;
+      paymentPlan: PaymentPlan;
+      expectedTotalAmount: string;
+      book: PriceBook;
+      items: readonly { productId: string; quantity: Prisma.Decimal }[];
+      customerComment: string | null;
+      /** The customer's submit is capped by the free stock; the manager's order is not [P]. */
+      capByStock: boolean;
+      /** A manager placed it for the member: the event says so (hard rule 12). */
+      onBehalfOf: boolean;
+      now: Date;
+    },
+  ): Promise<OrderRecord> {
+    const { actor, actorRole, book, items, paymentPlan, now } = input;
+    const priced = priceItems(book, items, paymentPlan);
+    if (priced.unorderableProductIds.length > 0) {
+      throw new ConflictError(
+        'Some products in the cart cannot be ordered right now',
+        'PRODUCT_NOT_ORDERABLE',
+        { productIds: priced.unorderableProductIds },
+      );
+    }
+    // Checked on the list read just before: a price removed after the person saw it refuses the
+    // order instead of pricing it at something they did not choose.
+    if (priced.missingDeferredProductIds.length > 0) {
+      throw this.deferredUnavailable(priced.missingDeferredProductIds);
+    }
+    // Read after the locks, like the book: a quantity the cart would refuse now is refused here
+    // too [C, 2026-11-09]. Nothing is reserved by passing (hard rule 10): the manager's allocation
+    // at approval settles two orders for the same last pieces.
+    if (input.capByStock) {
+      const overStock = linesOverStock(
+        items,
+        await this.carts.loadOrderableStock(
+          book,
+          items.map((item) => item.productId),
+        ),
+      );
+      if (overStock.length > 0) throw stockLimitExceeded(overStock);
+    }
+    // The debt is counted in USD at this rate: an order with an unknown debt is never stored.
+    // The rate comes from the read that priced the order, so a rate set a moment later cannot
+    // disagree with the so'm prices.
+    if (book.usdRate === null) {
+      throw new ConflictError(
+        'The order cannot be converted right now',
+        'CURRENCY_CONVERSION_UNAVAILABLE',
+      );
+    }
+    const totalUsd = orderTotalUsd(priced.lines, paymentPlan, book.usdRate);
+    if (!fitsMoney(priced.total) || !fitsUsd(totalUsd)) {
+      throw new InputValidationError([{ path: 'cart', message: 'The order total is too large' }]);
+    }
+    // Nothing was written yet, so the refusal leaves everything as it is.
+    if (!priced.total.equals(input.expectedTotalAmount)) {
+      throw new ConflictError('The total changed after the cart was read', 'CART_TOTAL_CHANGED', {
+        currentTotalAmount: formatAmount(priced.total),
+      });
+    }
+
+    const orderNumber = formatOrderNumber(await this.repository.nextOrderSequence(tx));
+    const order = await this.repository.createOrder(tx, {
+      orderNumber,
+      organizationId: input.organizationId,
+      placedByUserId: input.placedByUserId,
+      priceListVersionId: book.versionId,
+      // The tier the lines were priced with (hard rule 4: a later label change never alters it).
+      priceTier: book.priceTier,
+      idempotencyKey: input.idempotencyKey,
+      paymentPlan,
+      totalAmount: priced.total,
+      usdRate: book.usdRate,
+      totalUsd,
+      customerComment: input.customerComment,
+      now,
+      items: priced.lines.map((line) => ({
+        productId: line.productId,
+        productCodeSnapshot: line.productCode,
+        nameSnapshot: line.name,
+        unitSnapshot: line.unit,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.lineTotal,
+        fullUnitPrice: line.fullUnitPrice,
+        deferredUnitPrice: line.deferredUnitPrice,
+        fullUnitPriceUsd: line.fullUnitPriceUsd,
+        deferredUnitPriceUsd: line.deferredUnitPriceUsd,
+      })),
+    });
+
+    const [submittedEventId] = await this.repository.insertEvents(tx, [
+      {
+        orderId: order.id,
+        eventType: 'SUBMITTED',
+        fromStatus: null,
+        toStatus: 'SUBMITTED',
+        // Who did it: the customer, or the manager who created it for them.
+        actorUserId: actor.userId,
+        actorRole,
+        comment: null,
+        payload: {
+          before: null,
+          after: {
+            status: 'SUBMITTED',
+            orderNumber,
+            priceListVersionId: book.versionId,
+            priceTier: book.priceTier,
+            paymentPlan,
+            totalAmount: formatAmount(order.totalAmount),
+            usdRate: order.usdRate.toFixed(4),
+            totalUsd: formatUsdExact(order.totalUsd),
+            lines: priced.lines.map(snapshotPayloadLine),
+            ...(input.onBehalfOf
+              ? {
+                  createdOnBehalfOf: {
+                    organizationId: input.organizationId,
+                    placedByUserId: input.placedByUserId,
+                  },
+                  customerComment: input.customerComment,
+                }
+              : {}),
+          },
+        },
+        createdAt: now,
+      },
+    ]);
+    const submitContext = this.notificationContext(order, actor, actorRole, null);
+    const purchasingRow = buildPurchasingNotification(
+      'ORDER_SUBMITTED',
+      submitContext,
+      await this.purchasingFacts(tx, order.items),
+    );
+    // The same staff messages whoever placed it; the customer side gets nothing on submit
+    // (CUSTOMER_SIDE_NOTIFICATIONS).
+    await this.repository.insertOutbox(
+      tx,
+      [
+        ...buildSubmittedNotifications(submitContext),
+        ...(purchasingRow === null ? [] : [purchasingRow]),
+      ].map((row) => ({ ...row, orderEventId: requireId(submittedEventId) })),
+      now,
+    );
+    return order;
+  }
+
+  // ------------------------------------------------------- manager's new order
+
+  /**
+   * [C, owner 2026-11-20] The manager creates an order on behalf of a customer. It is an ordinary
+   * SUBMITTED order of the organization, placed by the chosen CURRENT member (so the customer side
+   * sees it as its own), priced exactly like a submit from the organization's catalog at its tier,
+   * with the same staff messages. The member is checked against the organization here, on the
+   * server (hard rule 6). Not capped by the free stock [P], like the manager's edits; nothing is
+   * held (hard rule 10). Approval stays a separate later step. A retry with the same
+   * Idempotency-Key (per organization) returns the same order and creates nothing.
+   */
+  async createForCustomer(
+    actor: Actor,
+    idempotencyKey: string,
+    rawRequest: CreateStaffOrderRequest,
+  ): Promise<OrderView> {
+    if (!can(actor, 'CREATE_ORDER_FOR_CUSTOMER')) throw new ForbiddenError('Access denied');
+    const key = parseInput(idempotencyKeySchema, idempotencyKey);
+    const request = parseInput(createStaffOrderRequestSchema, rawRequest);
+    const { organizationId, placedByUserId } = request;
+
+    // Fast path for a repeated request: no pricing, no locks.
+    const existing = await this.repository.findByIdempotencyKey(organizationId, key);
+    if (existing) return this.replayCreated(actor, existing);
+
+    if (!(await this.organizations.isActive(organizationId))) {
+      throw new ConflictError(
+        'This organization cannot place orders',
+        'ORDERING_ORGANIZATION_INACTIVE',
+      );
+    }
+    const items = request.lines.map((line, index) => {
+      const quantity = parseQuantity(line.quantity);
+      if (quantity === null) {
+        throw new InputValidationError([
+          { path: `lines.${index}.quantity`, message: 'Quantity must be a whole number of pieces' },
+        ]);
+      }
+      return { productId: line.productId, quantity };
+    });
+    const comment =
+      request.comment === undefined || request.comment === '' ? null : request.comment;
+
+    try {
+      const record = await this.repository.transaction(async (tx) => {
+        // Two parallel requests with one key: the second waits here, then finds the first order.
+        await lockByName(tx, `order-submit:${organizationId}:${key}`);
+        const again = await this.repository.findByIdempotencyKey(organizationId, key, tx);
+        if (again) return again;
+        // Under the organization's and the person's row locks: a member who leaves or is blocked
+        // a moment earlier can never become the order's placer (hard rule 6).
+        await this.assertMayPlaceFor(tx, organizationId, placedByUserId);
+        // Read after the lock, right before pricing (see submitCart).
+        const book = await this.carts.loadPriceBookForOrganization(organizationId);
+        if (book === null) {
+          throw new ConflictError('No price list has been published yet', 'NO_PUBLISHED_VERSION');
+        }
+        return this.writeSubmittedOrder(tx, {
+          actor,
+          actorRole: 'MANAGER',
+          organizationId,
+          placedByUserId,
+          idempotencyKey: key,
+          paymentPlan: request.paymentPlan,
+          expectedTotalAmount: request.expectedTotalAmount,
+          book,
+          items,
+          customerComment: comment,
+          capByStock: false,
+          onBehalfOf: true,
+          now: this.clock.now(),
+        });
+      });
+      return await this.replayCreated(actor, record);
+    } catch (error) {
+      // The advisory lock makes this unreachable in practice; the unique index is the backstop.
+      if (isUniqueViolation(error)) {
+        const winner = await this.repository.findByIdempotencyKey(organizationId, key);
+        if (winner) return this.replayCreated(actor, winner);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The person an order is placed by must be a CURRENT member of the organization with an active
+   * account: never a staff member, never somebody of another organization (hard rule 6).
+   */
+  private async assertMayPlaceFor(tx: Tx, organizationId: string, userId: string): Promise<void> {
+    const member = await this.organizations.lockActiveMember(tx, organizationId, userId);
+    if (!member || !(await this.identity.lockActiveCustomer(tx, userId))) {
+      throw new ConflictError(
+        'The person is not a current member of this organization',
+        'PLACER_NOT_MEMBER',
+      );
+    }
+  }
+
+  /** A retry of the manager's create: the same order, but only for the manager who created it. */
+  private async replayCreated(actor: Actor, order: OrderRecord): Promise<OrderView> {
+    const submitted = (await this.repository.findEvents(order.id)).find(
+      (event) => event.eventType === 'SUBMITTED',
+    );
+    if (submitted?.actorUserId !== actor.userId) {
+      throw new ConflictError(
+        'This idempotency key was already used by another person',
+        'IDEMPOTENCY_KEY_REUSED',
+      );
+    }
+    return toOrderView(order, actor);
   }
 
   private replay(actor: Actor, order: OrderRecord): OrderView {

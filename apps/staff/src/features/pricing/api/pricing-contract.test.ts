@@ -45,6 +45,8 @@ const ITEM = {
   alifDeferredPrice: null,
   currency: 'USD',
   uzs: { basePrice: '158125.00', deferredPrice: null },
+  brand: null,
+  lastChange: { versionNumber: 15, changedAt: '2026-11-19T09:41:00.000Z', changedBy: 'Dilnoza' },
   imageUrl: '/api/media/product-images/0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b/thumb',
   imageLargeUrl: '/api/media/product-images/0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b/large',
 };

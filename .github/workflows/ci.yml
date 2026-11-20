@@ -4,10 +4,18 @@ name: CI
 # is the release branch for PRODUCTION (merge dev into master to release). Production has no
 # environment on the server yet, so its job stays skipped until the repository variable
 # PROD_DEPLOY_ENABLED is set to "true" (and PROD_SSH_HOST/USER/KEY exist).
+#
+# GitHub Actions minutes are limited (the private repo hit the monthly cap on 2026-11-17), so every
+# change is tested ONCE per branch: on its pull request to dev and on the push to dev. The
+# dev -> master pull request is not tested again, and a push to master runs no tests: deploy-prod
+# only ships a master whose tree is exactly a dev commit that passed CI. Docs-only changes run nothing.
 on:
   push:
     branches: [dev, master]
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    branches: [dev]
+    paths-ignore: ['docs/**', '**/*.md']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,9 +28,11 @@ env:
   TEST_DATABASE_URL: postgresql://iorder:ci-only-password@127.0.0.1:5432/iorder_test
 
 jobs:
-  # The three jobs below run side by side, so the wait is the slowest one, not their sum. Together
-  # they run every check; nothing is skipped to save time.
+  # The jobs below run side by side, so the wait is the slowest one, not their sum. Together they
+  # run every check. Few runners on purpose: each one repeats checkout, install and the shared
+  # build, and every runner is billed per started minute.
   check:
+    if: github.ref != 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -34,40 +44,30 @@ jobs:
       - run: pnpm build
       # Fake adapters and demo users must never ship in the production web bundle.
       - run: pnpm check:bundle
-
-  # Unit tests of the web apps and packages; the api's own unit tests are the slowest, so they run
-  # in shards of their own below.
-  unit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
+      # Unit tests of the web apps and packages (the api's own run in unit-api).
       - run: pnpm turbo run test --filter=!@iorder/api
 
   unit-api:
+    if: github.ref != 'refs/heads/master'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: true
-      matrix:
-        shard: [1, 2, 3]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: pnpm turbo run build --filter=@iorder/shared
       - run: pnpm --filter @iorder/api db:generate
-      - run: pnpm --filter @iorder/api exec vitest run --shard=${{ matrix.shard }}/3
+      - run: pnpm --filter @iorder/api exec vitest run
 
   # Real PostgreSQL, no mocks (CLAUDE.md "Testing"). Migrations are applied by the suite itself.
   # The suite's files must not overlap on one database, so each shard gets its own.
   integration:
+    if: github.ref != 'refs/heads/master'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: true
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2]
 
     services:
       postgres:
@@ -89,14 +89,14 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm turbo run build --filter=@iorder/shared
       - run: pnpm --filter @iorder/api db:generate
-      - run: pnpm --filter @iorder/api exec vitest run -c vitest.integration.config.ts --shard=${{ matrix.shard }}/5
+      - run: pnpm --filter @iorder/api exec vitest run -c vitest.integration.config.ts --shard=${{ matrix.shard }}/2
 
   # Continuous deployment of staging: every push to `dev` that passed every check above is
   # shipped to the staging server the same way deploy/push.sh does by hand (git archive over ssh,
   # then deploy.sh on the server). Secrets: STAGING_SSH_HOST, STAGING_SSH_USER and STAGING_SSH_KEY
   # (a dedicated ed25519 deploy key, authorized on the server for that user only).
   deploy-staging:
-    needs: [check, unit, unit-api, integration]
+    needs: [check, unit-api, integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -126,10 +126,10 @@ jobs:
           IORDER_SSH: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
         run: sh deploy/push.sh staging
 
-  # Production: the same shape, from `master`, skipped until the server has /srv/iorder/prod and
-  # the owner sets the repository variable PROD_DEPLOY_ENABLED=true plus the PROD_SSH_* secrets.
+  # Production: the same shape, from `master`, only while the repository variable
+  # PROD_DEPLOY_ENABLED is "true" (plus the PROD_SSH_* secrets). No tests run here: the first step
+  # refuses a master whose tree is not exactly the tree of a dev commit whose CI run passed.
   deploy-prod:
-    needs: [check, unit, unit-api, integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.PROD_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -139,9 +139,38 @@ jobs:
     concurrency:
       group: deploy-prod
       cancel-in-progress: false
+    # actions: read lets the gate below see the CI runs of dev.
+    permissions:
+      contents: read
+      actions: read
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a master equal to a dev commit that passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Docs-only commits run no CI, so a passed run of an earlier dev commit counts when nothing
+        # but docs changed since it.
+        run: |
+          tree="$(git rev-parse HEAD^{tree})"
+          match=""
+          for sha in $(git rev-list --max-count=50 origin/dev); do
+            if [ "$(git rev-parse "$sha^{tree}")" = "$tree" ]; then match="$sha"; break; fi
+          done
+          if [ -z "$match" ]; then
+            echo "::error::master is not the tree of a recent dev commit; release by merging dev"
+            exit 1
+          fi
+          for sha in $(git rev-list --max-count=50 "$match"); do
+            if ! git diff --quiet "$sha" "$match" -- . ":(exclude)docs/**" ":(exclude)**/*.md"; then break; fi
+            ok="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch dev --event push --commit "$sha" --status success --json databaseId --jq length)"
+            if [ "$ok" -gt 0 ]; then echo "master = dev $match; CI passed on $sha"; exit 0; fi
+          done
+          echo "::error::no passed dev CI run covers master (dev $match); wait for it, then re-run this job"
+          exit 1
 
       - name: Prepare the ssh key and the server's host key
         env:

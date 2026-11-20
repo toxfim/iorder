@@ -176,6 +176,7 @@ function staffBase(
     orderNumber: order.orderNumber,
     organizationId: order.organizationId,
     organizationName: directory.organizationName(order.organizationId),
+    organizationType: directory.organizationType(order.organizationId),
     status: order.status,
     itemCount: order.itemCount,
     submittedAt: order.submittedAt.toISOString(),
@@ -195,6 +196,7 @@ function fullSummary(
   return {
     ...staffBase(order, directory, detail),
     detail: 'FULL',
+    organizationLabel: directory.organizationLabel(order.organizationId),
     paymentStatus: order.paymentStatus,
     paymentPlan: order.paymentPlan,
     totalAmount: formatAmount(order.totalAmount),

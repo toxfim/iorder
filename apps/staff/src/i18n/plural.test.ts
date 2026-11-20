@@ -89,9 +89,8 @@ describe('plural forms', () => {
       ['apiErrors', 'unknownProducts'],
       ['staffCost', 'stock', 'info'],
       ['staffCost', 'cost', 'recentTitle'],
-      ['staffCost', 'sync', 'nearMiss'],
-      ['staffCost', 'sync', 'rowsCount'],
-      ['staffCost', 'sync', 'createdTitle'],
+      ['staffCost', 'stock', 'activeCount'],
+      ['staffCost', 'stock', 'sheet', 'show'],
     ];
     const pick = (root: unknown, path: string[]): string =>
       path.reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], root) as string;

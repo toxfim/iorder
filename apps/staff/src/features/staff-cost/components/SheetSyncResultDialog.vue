@@ -15,9 +15,9 @@ export type SheetSyncOutcome =
 // toast was easy to miss, so the end of a manually started sync opens this dialog. It says in plain
 // words what changed in the stock. Rows the sync could not read are normal in the real sheet, so
 // they are a quiet line; deliveries that vanished from the sheet wait for a decision, so they are
-// the one warning. The full report stays in the card.
+// the one warning.
 const props = defineProps<{ modelValue: boolean; outcome: SheetSyncOutcome | null }>();
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; report: []; retry: [] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: boolean]; retry: [] }>();
 
 const { t } = useI18n();
 const { formatDateTime } = useFormat();
@@ -46,11 +46,6 @@ const ICONS = { ok: 'circlecheck', failed: 'alert', timeout: 'clock' } as const;
 
 function close(): void {
   emit('update:modelValue', false);
-}
-
-function openReport(): void {
-  close();
-  emit('report');
 }
 
 function checkAgain(): void {
@@ -122,9 +117,6 @@ function checkAgain(): void {
 
     <template #footer>
       <template v-if="run">
-        <AppButton variant="secondary" size="lg" @click="openReport">
-          {{ t('staffCost.sync.result.viewReport') }}
-        </AppButton>
         <AppButton size="lg" @click="close">{{ t('common.close') }}</AppButton>
       </template>
       <!-- No run yet: the only useful next step is to keep looking, so that is the main button. -->
@@ -178,7 +170,7 @@ function checkAgain(): void {
   margin: 0;
 }
 
-/* The stat tiles of the report (SheetSyncPanel .count), so both read as the same numbers. */
+/* Small stat tiles for the run's figures. */
 .result__count {
   display: flex;
   flex-direction: column;

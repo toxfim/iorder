@@ -1,5 +1,5 @@
-import type { OrderStatus, PaymentStatus } from '@iorder/shared';
-import { ORDER_STATUSES, PAYMENT_STATUSES } from '@iorder/shared';
+import type { OrderStatus, PaymentPlan, PaymentStatus } from '@iorder/shared';
+import { ORDER_STATUSES, PAYMENT_PLANS, PAYMENT_STATUSES } from '@iorder/shared';
 import type {
   StaffOrderCountsQuery,
   StaffOrderCountsResponse,
@@ -25,6 +25,8 @@ export type PeriodFilter = 'today' | 'debt';
 export interface OrderFilters {
   readonly stage: StageFilter | null;
   readonly payment: PaymentStatus | null;
+  /** The customer's payment plan ("To'lov turi"), FULL or DEFERRED. */
+  readonly plan: PaymentPlan | null;
   readonly period: PeriodFilter | null;
   /** Free text (number, organization, person); matched by `matchesOrderText`. */
   readonly text: string | null;
@@ -33,6 +35,7 @@ export interface OrderFilters {
 export const NO_ORDER_FILTERS: OrderFilters = {
   stage: null,
   payment: null,
+  plan: null,
   period: null,
   text: null,
 };
@@ -46,6 +49,7 @@ const first = (value: Query[string]): string | null =>
 export function parseOrderFilters(query: Query): OrderFilters {
   const stage = first(query.stage);
   const payment = first(query.pay);
+  const plan = first(query.plan);
   const period = first(query.period);
   const text = first(query.q)?.trim() ?? '';
   return {
@@ -56,6 +60,7 @@ export function parseOrderFilters(query: Query): OrderFilters {
     payment: (PAYMENT_STATUSES as readonly string[]).includes(payment ?? '')
       ? (payment as PaymentStatus)
       : null,
+    plan: (PAYMENT_PLANS as readonly string[]).includes(plan ?? '') ? (plan as PaymentPlan) : null,
     period: period === 'today' || period === 'debt' ? period : null,
     text: text === '' ? null : text.slice(0, MAX_TEXT_LENGTH),
   };
@@ -66,14 +71,17 @@ export function orderFiltersToQuery(filters: OrderFilters): Record<string, strin
   return {
     ...(filters.stage ? { stage: filters.stage } : {}),
     ...(filters.payment ? { pay: filters.payment } : {}),
+    ...(filters.plan ? { plan: filters.plan } : {}),
     ...(filters.period ? { period: filters.period } : {}),
     ...(filters.text ? { q: filters.text } : {}),
   };
 }
 
-/** Payment and period live in the "Filters" sheet; stage and text have their own controls. */
+/** Plan, period and payment live in the "Filtrlar" row; stage and text have their own controls. */
 export const secondaryFilterCount = (filters: OrderFilters): number =>
-  Number(filters.payment !== null) + Number(filters.period !== null);
+  Number(filters.payment !== null) +
+  Number(filters.plan !== null) +
+  Number(filters.period !== null);
 
 /**
  * The stage this role handles itself, shown right after "All" in the status tabs. Only the
@@ -92,6 +100,7 @@ export interface StageTabCount {
 export const hasOrderFilters = (filters: OrderFilters): boolean =>
   filters.stage !== null ||
   filters.payment !== null ||
+  filters.plan !== null ||
   filters.period !== null ||
   filters.text !== null;
 
@@ -130,6 +139,7 @@ export function orderListRequest(filters: OrderFilters): OrderListRequest {
   const payment = debt ? 'UNPAID' : filters.payment;
   const counts: StaffOrderCountsQuery = {
     ...(payment ? { paymentStatus: payment } : {}),
+    ...(filters.plan ? { paymentPlan: filters.plan } : {}),
     ...(filters.period === 'today' ? { period: 'TODAY' } : {}),
     ...(filters.text ? { search: filters.text } : {}),
   };

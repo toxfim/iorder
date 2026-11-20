@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COST_CELLS_MESSAGE, createCostSourceRowSchema } from './cost-source-row.js';
+import { createCostSourceRowSchema } from './cost-source-row.js';
 import { DeliveryCostSource } from './delivery-cost-source.js';
 import { FIXTURE_LINES, fixtureLine, fixtureTable } from './fake-delivery-cost-source.js';
 import {
@@ -48,6 +48,7 @@ describe('costSourceRowSchema', () => {
       costUsd: '12.3456',
       usdRateUsed: '12650.5',
       costUzs: '156190.50',
+      costIncomplete: false,
       availableQuantity: '250',
     });
   });
@@ -221,14 +222,38 @@ describe('cost pending rows (the three cost cells empty)', () => {
     });
   });
 
-  it('still rejects a row with only some cost cells empty, naming the empty headers', () => {
-    const result = costSourceRowSchema.safeParse(record({ costUsd: '', usdRateUsed: '' }));
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.issues.map((i) => [i.path.join('.'), i.message])).toEqual([
-      [SHEET_COLUMNS.costUsd, COST_CELLS_MESSAGE],
-      [SHEET_COLUMNS.usdRateUsed, COST_CELLS_MESSAGE],
-    ]);
+  it('stores a row with only some cost cells empty as cost pending, flagged (owner 2026-11-18)', () => {
+    expect(costSourceRowSchema.parse(record({ costUsd: '', usdRateUsed: '' }))).toMatchObject({
+      availableQuantity: '250',
+      costUsd: null,
+      usdRateUsed: null,
+      costUzs: null,
+      costIncomplete: true,
+    });
+  });
+
+  it("accepts a row with USD and so'm costs but no rate (owner 2026-11-17), the rate null", () => {
+    const row = costSourceRowSchema.parse(record({ usdRateUsed: '' }));
+    expect(row.usdRateUsed).toBeNull();
+    expect(row.costUsd).not.toBeNull();
+    expect(row.costUzs).not.toBeNull();
+    expect(row.costIncomplete).toBe(false);
+  });
+
+  it('a complete or an all-empty cost set is not flagged', () => {
+    expect(costSourceRowSchema.parse(record({})).costIncomplete).toBe(false);
+    expect(costSourceRowSchema.parse(record(empty)).costIncomplete).toBe(false);
+  });
+
+  it.each([
+    ['the USD cost', { costUsd: '' }],
+    ["the so'm cost", { costUzs: '' }],
+    ["the USD and so'm costs", { costUsd: '', costUzs: '' }],
+    ["the rate and the so'm cost", { usdRateUsed: '', costUzs: '' }],
+  ])('counts the stock of a row missing only %s, with no cost kept', (_name, cells) => {
+    const row = costSourceRowSchema.parse(record(cells));
+    expect(row).toMatchObject({ costUsd: null, usdRateUsed: null, costUzs: null });
+    expect(row.costIncomplete).toBe(true);
   });
 
   it('a non-empty cost cell is still validated as a decimal', () => {

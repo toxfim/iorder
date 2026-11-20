@@ -94,11 +94,15 @@ async function pickCategory(label: string): Promise<void> {
   if (!option) throw new Error(`No category "${label}"`);
   await click(option);
 }
-const statusButton = (value: string): HTMLButtonElement => {
-  const el = body().querySelector<HTMLButtonElement>(`.status [data-filter="${value}"]`);
-  if (!el) throw new Error(`no status filter ${value}`);
+// The design's ready views ("Tayyor ko'rinishlar"): one button each, with its count.
+const presetButton = (value: string): HTMLButtonElement => {
+  const el = body().querySelector<HTMLButtonElement>(`.views [data-preset="${value}"]`);
+  if (!el) throw new Error(`no ready view ${value}`);
   return el;
 };
+const presetCount = (value: string): string =>
+  text(presetButton(value).querySelector('.view__count'));
+const stockCount = (): string => text(body().querySelector('[data-testid="stock-count"]'));
 const rows = (): HTMLElement[] =>
   Array.from(body().querySelectorAll<HTMLElement>('.stock tbody tr'));
 const rowFor = (code: string): HTMLElement => {
@@ -107,6 +111,14 @@ const rowFor = (code: string): HTMLElement => {
   return found;
 };
 const codes = (): string[] => rows().map((r) => text(r.querySelector('.code')));
+/** Opens the design's list filter (brand, supplier) and returns its options' texts. */
+async function openFilterMenu(testId: string): Promise<string[]> {
+  const filter = `[data-testid="${testId}"]`;
+  const trigger = body().querySelector<HTMLButtonElement>(`${filter} .fmenu__trigger`);
+  if (!trigger) throw new Error(`no ${testId}`);
+  if (trigger.getAttribute('aria-expanded') !== 'true') await click(trigger);
+  return Array.from(body().querySelectorAll(`${filter} [role="option"]`)).map((o) => text(o));
+}
 async function click(el: HTMLElement): Promise<void> {
   el.click();
   await flushPromises();
@@ -120,56 +132,119 @@ const dialog = (): HTMLElement | null =>
   body().querySelector('[data-testid="modal"]:not(.modal--closing) [role="dialog"]');
 
 describe('Qoldiq page: the table', () => {
-  it('lists products with stock or deliveries in the v8 columns of real data', async () => {
+  it('lists products with stock or deliveries in the columns of the approved design', async () => {
     await mountStock('manager');
     expect(text(body().querySelector('h1'))).toBe('Qoldiq');
-    expect(text(body().querySelector('.list-count'))).toBe(
-      '21 ta tovar · 5 tasi narxlarga chiqmagan',
-    );
-    const headers = Array.from(body().querySelectorAll('.stock thead th')).map((h) =>
-      text(h).replace(/ [↕↑↓]$/, ''),
-    );
+    expect(stockCount()).toBe('21 ta tovar');
+    const headers = Array.from(body().querySelectorAll('.stock thead th')).map((h) => text(h));
+    // The cost column stays (owner 2026-11-19), the supplier column is gone (owner 2026-11-20:
+    // the supplier filter stays); the action column has a spoken name only.
     expect(headers).toEqual([
       'Tovar',
+      'Kategoriya / Brend',
       'Jami',
       'Band',
       'Mavjud',
-      'Tannarx',
-      'Цена $',
-      'Oxirgi postavka',
-      'Postavkalar soni',
-      'Narxlar',
+      'Narx',
+      'Yangilangan',
+      'Amallar',
     ]);
     expect(rows()).toHaveLength(21);
     const priced = spaced(rowFor('10491'));
     expect(priced).toContain('Samsung Galaxy A15 4/128GB');
-    // v8 "SKU · category" under the name.
-    expect(spaced(rowFor('10491').querySelector('.meta'))).toBe('10491 · Telefonlar');
+    // The category and the brand (the api's brand rule) in their own column.
+    expect(spaced(rowFor('10491').querySelectorAll('td')[1])).toBe('Telefonlar Samsung');
     expect(priced).toContain('59');
-    expect(priced).toContain('Narxlarda');
     expect(priced).toContain('16.10.2026');
-    expect(rowFor('10491').querySelector('.deliveries')?.textContent?.trim()).toBe('6');
-    expect(text(rowFor('10521'))).toContain("Narx qo'yish");
+    // Priced: the quiet "O'zgartirish"; not priced: the pill and the orange "Narx qo'yish".
+    expect(text(rowFor('10491').querySelector('[data-action="change-price"]'))).toBe(
+      "O'zgartirish",
+    );
+    expect(text(rowFor('10521').querySelector('.pill--off'))).toBe("Narx qo'yilmagan");
+    expect(text(rowFor('10521').querySelector('[data-action="set-price"]'))).toBe("Narx qo'yish");
     // Priced without a single delivery, or never in the sheet: not in the stock list.
     expect(codes()).not.toContain('10499');
     expect(codes()).not.toContain('10525');
-    // The note that stock is indicative, not a reservation (hard rule 10).
+    // The note that stock is indicative, not a reservation (hard rule 10), and the totals.
     expect(text(body().querySelector('.note'))).toContain('Mavjud: jami minus band');
+    expect(text(body().querySelector('[data-testid="stock-totals"]'))).toMatch(
+      /^Jami .+ · Band .+ · Mavjud .+ dona$/,
+    );
   });
 
-  it('shows a coloured dot with spoken text for each level', async () => {
+  it('sorts by the newest supply first, and by the free stock or the name on request', async () => {
+    const { services, router } = await mountStock('manager');
+    const items = (await services.stockApi.listStock()).items;
+    const byCode = new Map(items.map((i) => [i.productCode, i]));
+    const delivered = (code: string): number =>
+      Date.parse(byCode.get(code)?.latestDelivery?.deliveredAt ?? '') || 0;
+    const shownDates = codes().map(delivered);
+    expect(shownDates).toEqual([...shownDates].sort((a, b) => b - a));
+
+    await router.replace('/stock?sort=available');
+    await flushPromises();
+    const free = (code: string): number => Number(byCode.get(code)?.availableQuantity ?? -1);
+    const shownFree = codes().map(free);
+    expect(shownFree).toEqual([...shownFree].sort((a, b) => b - a));
+
+    await router.replace('/stock?sort=name');
+    await flushPromises();
+    expect(codes()).toHaveLength(21);
+  });
+
+  it('pages the list: 10 per page shows the first ten and moves on', async () => {
     await mountStock('manager');
-    expect(rowFor('10482').querySelector('.stock-cell__dot--ok')).not.toBeNull(); // 600
-    // The amount and its unit read as one phrase with a space, on one line.
-    expect(text(rowFor('10482').querySelector('.stock-cell__value'))).toBe('600 dona');
-    expect(rowFor('10484').querySelector('.stock-cell__dot--low')).not.toBeNull(); // 12
-    expect(rowFor('10487').querySelector('.stock-cell__dot--out')).not.toBeNull(); // 0
-    expect(text(rowFor('10487').querySelector('.sr-only'))).toBe('Qolmagan');
+    expect(text(body().querySelector('[data-testid="page-range"]'))).toBe('1–21 / 21');
+    const sizeTrigger = body().querySelector<HTMLButtonElement>('[data-testid="page-size"] button');
+    if (!sizeTrigger) throw new Error('no page size');
+    await click(sizeTrigger);
+    const ten = Array.from(body().querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (o) => text(o) === '10 ta',
+    );
+    if (!ten) throw new Error('no 10 option');
+    await click(ten);
+    expect(rows()).toHaveLength(10);
+    expect(text(body().querySelector('[data-testid="page-range"]'))).toBe('1–10 / 21');
+    await click(button('Sahifa 3'));
+    expect(rows()).toHaveLength(1);
+    expect(button('Keyingi sahifa').disabled).toBe(true);
+  });
+
+  it('switches to card B and back; the cards open the side panel', async () => {
+    const { router } = await mountStock('manager');
+    await click(button('Kartochka'));
+    expect(router.currentRoute.value.query.layout).toBe('cards');
+    expect(rows()).toHaveLength(0);
+    const cards = Array.from(body().querySelectorAll<HTMLButtonElement>('.grid .scard'));
+    expect(cards).toHaveLength(21);
+    const card = cards.find((c) => text(c).includes('10491'));
+    if (!card) throw new Error('no card 10491');
+    expect(spaced(card)).toContain('Narxlarda');
+    expect(spaced(card)).toContain('$133,60');
+    await click(card);
+    expect(body().querySelector('[data-testid="drawer"]')).not.toBeNull();
+    await click(button('Jadval'));
+    expect(router.currentRoute.value.query.layout).toBeUndefined();
+    expect(rows()).toHaveLength(21);
+  });
+
+  it('shows the free stock as a coloured figure with a bar, never by colour alone', async () => {
+    await mountStock('manager');
+    const free = (code: string): Element | null => rowFor(code).querySelector('.st__free');
+    expect(free('10482')?.classList.contains('st__free--ok')).toBe(true); // 600
+    expect(text(free('10482')?.querySelector('b'))).toBe('600');
+    expect(free('10482')?.querySelector('.st__bar')).not.toBeNull();
+    // Low is said in words too (for screen readers); zero is the word "Qolmagan".
+    expect(free('10484')?.classList.contains('st__free--low')).toBe(true); // 12
+    expect(text(free('10484')?.querySelector('.sr-only'))).toBe('Kam qoldiq');
+    expect(free('10487')?.classList.contains('st__free--out')).toBe(true); // 0
+    expect(text(free('10487')?.querySelector('b'))).toBe('Qolmagan');
+    expect(free('10487')?.querySelector('.st__bar')).toBeNull();
   });
 
   it('has a category dropdown with counts from the endpoint and filters the table', async () => {
     await mountStock('manager');
-    expect(categoryValue()).toBe('Barcha kategoriyalar');
+    expect(categoryValue()).toBe('Hammasi');
     expect(await categoryMenu()).toEqual([
       'Barcha kategoriyalar21',
       'Aksessuarlar7',
@@ -191,31 +266,57 @@ describe('Qoldiq page: the table', () => {
     if (!search) throw new Error('no search');
     await type(search, 'зарядное');
     // Russian names of 10483 (Samsung charger), 10493 (old charger) and 10522 (Baseus).
-    expect(codes()).toEqual(['10483', '10493', '10522']);
+    expect([...codes()].sort()).toEqual(['10483', '10493', '10522']);
     expect((await categoryMenu())[0]).toBe('Barcha kategoriyalar3');
+    expect(presetCount('all')).toBe('3');
+    // The design's search finds a brand too.
+    await type(search, 'baseus');
+    expect(codes()).toContain('10522');
     await type(search, 'zzz');
     expect(codes()).toEqual([]);
-    expect(text(body().querySelector('.dt__empty'))).toBe("Filtrga mos tovar yo'q");
+    expect(text(body().querySelector('.nomatch'))).toContain(
+      "Bu filtrlar bo'yicha tovar topilmadi",
+    );
+    // The way out clears the search too.
+    await click(button('Filtrlarni tozalash'));
+    expect(codes()).toHaveLength(21);
   });
 
-  it('"Omborda bor" asks the server for products with stock and updates the counts', async () => {
+  it('"Qoldiq yo\'q" keeps an exact zero only, on the client, with the counts of every view', async () => {
     const { services } = await mountStock('manager');
+    const items = (await services.stockApi.listStock()).items;
     const spy = vi.spyOn(services.stockApi, 'listStock');
-    const box = body().querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!box) throw new Error('no checkbox');
-    box.checked = true;
-    box.dispatchEvent(new Event('change', { bubbles: true }));
-    await flushPromises();
-    expect(spy).toHaveBeenCalledWith({ inStock: true });
-    expect(codes()).toHaveLength(17);
-    expect(codes()).not.toContain('10487');
-    const menu = await categoryMenu();
-    expect(menu[0]).toBe('Barcha kategoriyalar17');
-    // The only TV is out of stock, so it is gone (the server counts only what matches).
-    expect(menu.some((label) => label.startsWith('Televizorlar'))).toBe(false);
+    const out = items.filter((i) => i.availableQuantity === '0.000').map((i) => i.productCode);
+    expect(out.length).toBeGreaterThan(0);
+    expect(presetCount('all')).toBe('21');
+    expect(presetCount('unpriced')).toBe('5');
+    expect(presetCount('out')).toBe(String(out.length));
+    await click(presetButton('out'));
+    expect(presetButton('out').getAttribute('aria-pressed')).toBe('true');
+    expect([...codes()].sort()).toEqual([...out].sort());
+    expect(codes()).toContain('10487');
+    // A ready view filters what the page holds: no request.
+    expect(spy).not.toHaveBeenCalled();
   });
 
-  it('keeps the table on screen while "Omborda bor" reloads (no skeleton flash)', async () => {
+  it('"Oz qolgan" keeps the low stock above zero; "Yangi postavka" the supplies of the last days', async () => {
+    const { services } = await mountStock('manager');
+    await click(presetButton('low'));
+    expect(codes()).toContain('10484'); // 12 left
+    expect(codes()).not.toContain('10487'); // 0 left
+    expect(codes()).not.toContain('10482'); // 600 left
+    // The demo deliveries are older than a week, so nothing is new; the empty view says so.
+    const items = (await services.stockApi.listStock()).items;
+    const weekAgo = Date.now() - 7 * 86_400_000;
+    const fresh = items.filter(
+      (i) => i.latestDelivery !== null && Date.parse(i.latestDelivery.deliveredAt) >= weekAgo,
+    );
+    await click(presetButton('new'));
+    expect(codes()).toHaveLength(fresh.length);
+    expect(presetCount('new')).toBe(String(fresh.length));
+  });
+
+  it('keeps the table on screen while the list reloads after a decision (no skeleton flash)', async () => {
     const { services } = await mountStock('manager');
     let release: () => void = () => undefined;
     const original = services.stockApi.listStock.bind(services.stockApi);
@@ -226,34 +327,82 @@ describe('Qoldiq page: the table', () => {
       return original(query);
     });
     const table = body().querySelector('.surface');
-    const box = body().querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!table || !box) throw new Error('no table or checkbox');
-    box.checked = true;
-    box.dispatchEvent(new Event('change', { bubbles: true }));
-    await flushPromises();
-    // The request is still running: the old rows stay, the list says it is busy.
+    if (!table) throw new Error('no table');
+    // Dismissing a removal request reloads the stock silently.
+    const dismiss = buttons().find((b) => text(b) === 'Rad etish');
+    if (!dismiss) throw new Error('no dismiss button');
+    await click(dismiss);
     expect(body().querySelector('[data-state="loading"]')).toBeNull();
     expect(body().querySelector('.surface')).toBe(table);
-    expect(codes().length).toBeGreaterThan(17);
     expect(body().querySelector('.list')?.getAttribute('aria-busy')).toBe('true');
     release();
     await flushPromises();
     expect(body().querySelector('.surface')).toBe(table);
-    expect(codes()).toHaveLength(17);
     expect(body().querySelector('.list')?.getAttribute('aria-busy')).toBe('false');
   });
 
-  it('falls back to all categories when the selected one disappears from the answer', async () => {
+  it('keeps a chosen category under a view that leaves it empty, and offers a way out', async () => {
     await mountStock('manager');
     await pickCategory('Televizorlar');
     expect(codes()).toEqual(['10498']);
-    const box = body().querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!box) throw new Error('no checkbox');
-    box.checked = true;
-    box.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(text(body().querySelector('[data-chip="category"]'))).toContain('Televizorlar');
+    await click(presetButton('low'));
+    expect(categoryValue()).toBe('Televizorlar');
+    expect(body().querySelector('.nomatch')).not.toBeNull();
+    await click(button('Filtrlarni tozalash'));
+    expect(presetButton('all').getAttribute('aria-pressed')).toBe('true');
+    expect(categoryValue()).toBe('Hammasi');
+    expect(codes()).toHaveLength(21);
+  });
+
+  it('shows the active lists as chips; a chip removes its filter, "Tozalash" all of them', async () => {
+    const { router } = await mountStock('manager', {
+      path: '/stock?category=c%3ATelefonlar&brand=Samsung',
+    });
+    expect(text(body().querySelector('.chips__count'))).toBe('2 ta faol filtr');
+    expect(codes().length).toBeGreaterThan(0);
+    await click(button('Brend filtrini olib tashlash'));
+    expect(router.currentRoute.value.query.brand).toBeUndefined();
+    expect(body().querySelector('[data-chip="brand"]')).toBeNull();
+    await click(button('Tozalash'));
+    expect(body().querySelector('.chips')).toBeNull();
+    expect(codes()).toHaveLength(21);
+  });
+
+  it('filters by brand with counts from the answer, kept in the address', async () => {
+    const { router, services } = await mountStock('manager');
+    const items = (await services.stockApi.listStock()).items;
+    const samsung = items.filter((i) => i.brand === 'Samsung').map((i) => i.productCode);
+    expect(samsung.length).toBeGreaterThan(0);
+    const options = await openFilterMenu('brand-filter');
+    expect(options[0]).toBe('Hammasi');
+    expect(options).toContain(`Samsung${samsung.length}${samsung.length} mahsulot`);
+    await router.replace('/stock?brand=Samsung');
     await flushPromises();
-    expect(categoryValue()).toBe('Barcha kategoriyalar');
-    expect(codes()).toHaveLength(17);
+    expect([...codes()].sort()).toEqual([...samsung].sort());
+  });
+
+  it('shows the brand filter as the design button: name and value, a search in the popup', async () => {
+    await mountStock('manager');
+    const filter = body().querySelector('[data-testid="brand-filter"]');
+    const trigger = filter?.querySelector<HTMLButtonElement>('.fmenu__trigger');
+    // One label, one value: never the name twice ("Brend Brend qidirish").
+    expect(spaced(trigger)).toBe('Brend Hammasi');
+    trigger?.click();
+    await flushPromises();
+    const search = filter?.querySelector<HTMLInputElement>('.fmenu__input');
+    expect(document.activeElement).toBe(search);
+    expect(search?.placeholder).toBe('Brend qidirish');
+    search!.value = 'sams';
+    search!.dispatchEvent(new Event('input'));
+    await flushPromises();
+    expect(Array.from(filter!.querySelectorAll('[role="option"] .fmenu__label')).map(text)).toEqual(
+      ['Samsung'],
+    );
+    search!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await flushPromises();
+    expect(spaced(trigger)).toBe('Brend Samsung');
+    expect(filter?.querySelector('.fmenu__pop')).toBeNull();
   });
 });
 
@@ -285,41 +434,21 @@ describe('Qoldiq page: the side panel', () => {
   });
 });
 
-describe('Qoldiq page: the sheet sync report', () => {
-  it('shows the last run: time, status, counts, rejected rows, skipped suppliers, new products, mismatches', async () => {
+describe('Qoldiq page: the sheet sync line', () => {
+  it('says where the stock comes from and when it was read, with no report under it', async () => {
     await mountStock('manager');
     const panel = body().querySelector('[data-testid="sync-panel"]');
     expect(text(panel?.querySelector('.sync__summary'))).toContain('Muvaffaqiyatli');
     // 04:00:09 UTC is 09:00 in Tashkent.
     expect(text(panel?.querySelector('.sync__summary'))).toContain('Oxirgi: 19.10.2026 09:00');
     expect(text(panel?.querySelector('.sync__summary'))).toContain("Qo'lda ishga tushirilgan");
-
-    const counts = spaced(panel?.querySelector('.sync__counts'));
-    expect(counts).toContain("O'qilgan qatorlar 212");
-    expect(counts).toContain('Rad etilgan qatorlar 2');
-    expect(counts).toContain('Yangi tovarlar 3');
-    expect(counts).toContain("O'chirish so'rovlari 2");
-
-    // Rejected rows name the sheet header and a reason, never a cell's contents.
-    const rejected = spaced(panel?.querySelectorAll('.block')[0]);
-    expect(rejected).toContain('Цена закупа $');
-    expect(rejected).toContain('Son emas yoki manfiy');
-    expect(rejected).not.toContain('NOT_A_NUMBER');
-    expect(rejected).toContain('Tovar ID kiritilmagan');
-    expect(rejected).toContain('10523');
-
-    const skipped = panel?.querySelectorAll('.block')[1];
-    expect(text(skipped)).toContain('Beta system tm fbs');
-    expect(text(skipped)).toContain('sana chegarasidan oldin');
-    expect(text(skipped)).toContain('12 ta qator');
-    // The near miss: a name that only differs by a hidden character is flagged, and the
-    // character is made visible.
-    expect(text(skipped)).toContain('alpha trade import<U+200B>');
-    expect(text(skipped)).toContain("Ko'rinmas belgi bor");
-    expect(text(panel?.querySelector('.sync__warn'))).toContain("ko'rinmas belgi bor");
-
-    expect(spaced(panel?.querySelectorAll('.block')[2])).toContain('10521 10522 10525');
-    expect(spaced(panel?.querySelectorAll('.block')[3])).toContain('10482 Z-20413 farq 0.80%');
+    // The design's visible line: synced with the sheet, how long ago.
+    expect(text(panel?.querySelector('.sync__when'))).toMatch(/^«Поставка» bilan sinxron · /);
+    // The detailed report was removed (owner 2026-11-19).
+    expect(panel?.querySelector('details')).toBeNull();
+    expect(text(panel)).not.toContain('Sinxronlash hisoboti');
+    // The hidden-character warning went with the report (design 2026-11-19).
+    expect(panel?.querySelector('.sync__warn')).toBeNull();
   });
 
   it('shows an empty state when the sync never ran', async () => {
@@ -377,6 +506,7 @@ describe('Qoldiq page: removal requests', () => {
     const before = (await services.stockApi.listStock()).items.find(
       (i) => i.productCode === '10483',
     );
+    const reload = vi.spyOn(services.stockApi, 'listStock');
     await click(button('Tasdiqlash: 10483 Z-20375'.replace('Z-20375', refOf(requests()[0]))));
     expect(dialog()?.textContent).toContain('qoldiq va tannarx tarixida hisobga olinmaydi');
     expect(dialog()?.textContent).toContain('hisobdan chiqariladi');
@@ -388,8 +518,12 @@ describe('Qoldiq page: removal requests', () => {
     expect(requests()).toHaveLength(1);
     expect(useToast().toast.value?.message).toContain('qator hisobdan chiqarildi');
     // The stock table is read again: the line no longer counts.
-    const after = rowFor('10483').querySelector('.deliveries')?.textContent?.trim();
-    expect(after).toBe(String((before?.deliveryCount ?? 0) - 1));
+    expect(reload).toHaveBeenCalled();
+    const after = (await services.stockApi.listStock()).items.find(
+      (i) => i.productCode === '10483',
+    );
+    expect(after?.deliveryCount).toBe((before?.deliveryCount ?? 0) - 1);
+    expect(codes()).toContain('10483');
   });
 
   it('cancelling the confirmation decides nothing', async () => {
@@ -511,7 +645,7 @@ describe('Qoldiq page: category and search live in the address', () => {
     expect(selectedCategory()).toContain('Telefonlar');
     await router.push('/stock');
     await flushPromises();
-    expect(selectedCategory()).toBe('Barcha kategoriyalar');
+    expect(selectedCategory()).toBe('Hammasi');
     expect(searchBox().value).toBe('');
   });
 });
@@ -530,25 +664,30 @@ describe('Qoldiq page: our rules over the v8 design', () => {
     expect(text(card)).toContain("Faqat o'qiladi");
   });
 
-  it("shows the selling price in USD and the cost in so'm with dollars below", async () => {
+  it('shows the selling price in USD with the latest cost under it', async () => {
     await mountStock('manager');
     const row = rowFor('10491');
-    // Prices are kept in USD [owner 2026-10-29].
-    expect(text(row.querySelectorAll('td')[5])).toBe('$133,60');
-    expect(text(row.querySelectorAll('td')[4])).toContain('$');
+    // Prices are kept in USD [owner 2026-10-29]; the cost column stays (owner 2026-11-19).
+    expect(text(row.querySelector('td.st__price b'))).toBe('$133,60');
+    expect(text(row.querySelector('.st__cost'))).toBe('Tannarx $128,50');
     // Not in the published list: no price.
-    expect(text(rowFor('10521').querySelectorAll('td')[5])).toBe('—');
+    expect(text(rowFor('10521').querySelector('td.st__price b'))).toBe('—');
   });
 
-  it('filters by price status with counts, kept in the address', async () => {
-    const { router } = await mountStock('manager');
-    expect(text(statusButton('all'))).toBe('Hammasi 21');
-    expect(text(statusButton('priced'))).toBe('Narxlarda 16');
-    expect(text(statusButton('unpriced'))).toBe("Narx qo'yilmagan 5");
-    await click(statusButton('unpriced'));
-    expect(statusButton('unpriced').getAttribute('aria-pressed')).toBe('true');
+  it('opens on the "unpriced" view from the old Narxlar link and keeps the view in the address', async () => {
+    const { router } = await mountStock('manager', { path: '/stock?priced=unpriced' });
+    expect(router.currentRoute.value.query).toEqual({ preset: 'unpriced' });
+    expect(presetButton('unpriced').getAttribute('aria-pressed')).toBe('true');
     expect(codes()).toHaveLength(5);
-    expect(router.currentRoute.value.query.priced).toBe('unpriced');
+  });
+
+  it('filters by the "unpriced" view with its task, kept in the address', async () => {
+    const { router } = await mountStock('manager');
+    expect(spaced(presetButton('unpriced'))).toBe("Narx qo'yilmagan 5 Narx qo'yish kerak");
+    await click(presetButton('unpriced'));
+    expect(presetButton('unpriced').getAttribute('aria-pressed')).toBe('true');
+    expect(codes()).toHaveLength(5);
+    expect(router.currentRoute.value.query.preset).toBe('unpriced');
     // Categories without such a product stay in the menu, dimmed, after the ones with products.
     const menu = await categoryMenu();
     const firstEmpty = menu.findIndex((label) => label.endsWith('0'));
@@ -559,10 +698,12 @@ describe('Qoldiq page: our rules over the v8 design', () => {
   it("offers 'Narx qo'yish' to a price editor; its dialog publishes the price at once", async () => {
     const { services } = await mountStock('manager');
     const publish = vi.spyOn(services.pricingApi, 'publishChanges');
-    expect(rowFor('10491').querySelector('.setprice')).toBeNull();
+    expect(rowFor('10491').querySelector('[data-action="set-price"]')).toBeNull();
     // Zero stock is no reason to refuse a price: 10524 has 0 left.
-    expect(rowFor('10524').querySelector('.stock-cell__dot--out')).not.toBeNull();
-    const button10524 = rowFor('10524').querySelector<HTMLButtonElement>('.setprice');
+    expect(rowFor('10524').querySelector('.st__free--out')).not.toBeNull();
+    const button10524 = rowFor('10524').querySelector<HTMLButtonElement>(
+      '[data-action="set-price"]',
+    );
     if (!button10524) throw new Error('no set price button');
     await click(button10524);
     // The click did not also open the side panel; the price dialog is open instead.
@@ -574,7 +715,7 @@ describe('Qoldiq page: our rules over the v8 design', () => {
     const save = Array.from(
       dialog()?.closest('[data-testid="modal"]')?.querySelectorAll<HTMLButtonElement>('button') ??
         [],
-    ).find((b) => text(b) === 'Narxlarga chiqarish');
+    ).find((b) => text(b).startsWith('Narxlarga chiqarish'));
     if (!save) throw new Error('no save button');
     await click(save);
     expect(publish).toHaveBeenCalledTimes(1);
@@ -584,7 +725,8 @@ describe('Qoldiq page: our rules over the v8 design', () => {
       upserts: [{ basePrice: '2390000' }],
     });
     expect(dialog()).toBeNull();
-    expect(rowFor('10524').querySelector('.setprice')).toBeNull();
+    expect(rowFor('10524').querySelector('[data-action="set-price"]')).toBeNull();
+    expect(rowFor('10524').querySelector('[data-action="change-price"]')).not.toBeNull();
     expect(text(rowFor('10524'))).toContain('2 390 000');
     expect(useToast().toast.value?.message).toMatch(/^Narxlar saqlandi · v15 · /);
   });
@@ -592,7 +734,9 @@ describe('Qoldiq page: our rules over the v8 design', () => {
   it('prices a product the sheet created without a unit at once (pieces only)', async () => {
     const { services } = await mountStock('manager');
     const publish = vi.spyOn(services.pricingApi, 'publishChanges');
-    const button10521 = rowFor('10521').querySelector<HTMLButtonElement>('.setprice');
+    const button10521 = rowFor('10521').querySelector<HTMLButtonElement>(
+      '[data-action="set-price"]',
+    );
     if (!button10521) throw new Error('no set price button');
     await click(button10521);
     expect(text(dialog())).not.toContain('Birlik');
@@ -602,7 +746,7 @@ describe('Qoldiq page: our rules over the v8 design', () => {
     const save = Array.from(
       dialog()?.closest('[data-testid="modal"]')?.querySelectorAll<HTMLButtonElement>('button') ??
         [],
-    ).find((b) => text(b) === 'Narxlarga chiqarish');
+    ).find((b) => text(b).startsWith('Narxlarga chiqarish'));
     if (!save) throw new Error('no save button');
     await click(save);
     expect(publish).toHaveBeenCalledTimes(1);
@@ -624,9 +768,9 @@ describe('stock page: "sync now" with the sheet', () => {
       const request = vi.spyOn(services.stockApi, 'requestSyncRun');
       const list = vi.spyOn(services.stockApi, 'listStock');
       const panel = body().querySelector('[data-testid="sync-panel"]');
-      const syncNow = panel?.querySelector<HTMLButtonElement>('[data-testid="sync-now"]');
+      const syncNow = body().querySelector<HTMLButtonElement>('[data-testid="sync-now"]');
       if (!syncNow) throw new Error('no sync-now button');
-      expect(text(syncNow)).toBe('Jadval bilan sinxronlash');
+      expect(text(syncNow)).toBe('Sinxronlash');
 
       syncNow.click();
       await flushPromises();
@@ -674,8 +818,8 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
   const dialog = (): HTMLElement | null => body().querySelector<HTMLElement>('[role="dialog"]');
   const syncNow = (): HTMLButtonElement =>
     body().querySelector<HTMLButtonElement>('[data-testid="sync-now"]') as HTMLButtonElement;
-  const report = (): HTMLDetailsElement =>
-    body().querySelector<HTMLDetailsElement>('.sync__details') as HTMLDetailsElement;
+  const failedLine = (): Element | null =>
+    body().querySelector('[data-testid="sync-panel"] .sync__failed');
 
   async function startSync(
     prepare?: (services: Services) => void,
@@ -713,22 +857,13 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
     );
     // The stock table was read again, and the button is ready for the next run.
     expect(reload).toHaveBeenCalled();
-    expect(text(syncNow())).toBe('Jadval bilan sinxronlash');
+    expect(text(syncNow())).toBe('Sinxronlash');
 
     await click(button('Yopish', dialog()!));
     await pass(500);
     expect(dialog()).toBeNull();
-    expect(report().open).toBe(false);
-  });
-
-  it('"view the report" closes the dialog and unfolds the report in the card', async () => {
-    await startSync();
-    await pass(10_000);
-    expect(report().open).toBe(false);
-    await click(button("Hisobotni ko'rish", dialog()!));
-    await pass(500);
-    expect(dialog()).toBeNull();
-    expect(report().open).toBe(true);
+    // No report to open any more (owner 2026-11-19): the dialog only closes.
+    expect(buttons().some((b) => text(b) === "Hisobotni ko'rish")).toBe(false);
   });
 
   it('says so when the sheet had nothing new, without a row of zeros', async () => {
@@ -760,8 +895,8 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
     expect(text(dialog())).toContain("Qoldiq o'zgarmadi.");
     expect(text(dialog()?.querySelector('.result__code'))).toBe('Xato kodi: SHEET_UNREACHABLE');
     expect(dialog()?.querySelector('.result__counts')).toBeNull();
-    // A failed run unfolds the report by itself.
-    expect(report().open).toBe(true);
+    // The line under the title says it failed, with the code.
+    expect(text(failedLine())).toContain('SHEET_UNREACHABLE');
   });
 
   it('does not go quiet when no run appears in time', async () => {
@@ -772,7 +907,7 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
     await pass(3 * 60_000 + 5_000);
     expect(text(dialog()?.querySelector('h2'))).toBe('Sinxronlash hali tugamadi');
     expect(dialog()?.querySelector('[data-testid="sync-result"]')).toBeNull();
-    expect(text(syncNow())).toBe('Jadval bilan sinxronlash');
+    expect(text(syncNow())).toBe('Sinxronlash');
   });
 
   // Found in review: the comparison baseline was whatever the card had loaded, and that is nothing
@@ -799,7 +934,7 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
     await flushPromises();
     expect(request).not.toHaveBeenCalled();
     expect(syncNow().disabled).toBe(false);
-    expect(text(syncNow())).toBe('Jadval bilan sinxronlash');
+    expect(text(syncNow())).toBe('Sinxronlash');
   });
 
   it('stops for good when the page is left while a poll is still in flight', async () => {
@@ -825,7 +960,7 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('folds the report again when a good run follows a failed one', async () => {
+  it('drops the failure line when a good run follows a failed one', async () => {
     const { services } = await mountStock('manager');
     const runs = await services.stockApi.listSyncRuns();
     const failed = runs.items.find((r) => r.status === 'FAILED');
@@ -838,11 +973,11 @@ describe('Qoldiq page: "sync now" says how it ended', () => {
         worked ? read() : Promise.resolve(failed),
       );
     });
-    expect(report().open).toBe(true);
+    expect(failedLine()).not.toBeNull();
     worked = true;
     await pass(10_000);
     expect(text(dialog()?.querySelector('h2'))).toBe('Sinxronlash tugadi');
-    expect(report().open).toBe(false);
+    expect(failedLine()).toBeNull();
   });
 
   it('"check again" after the waiting time keeps looking for the same run', async () => {
@@ -901,7 +1036,7 @@ describe('Qoldiq page: the mega report', () => {
       vi.spyOn(services.stockApi, 'downloadMegaReport').mockImplementation(
         () => new Promise((resolve) => (release = () => resolve(real()))),
       );
-      expect(text(button())).toBe('Mega report');
+      expect(text(button())).toBe('Mega hisobot');
       button()?.click();
       await flushPromises();
       expect(button()?.disabled).toBe(true);
@@ -913,7 +1048,7 @@ describe('Qoldiq page: the mega report', () => {
       expect(saved).toEqual([{ download: 'Mega_report-demo.csv' }]);
       expect(useToast().toast.value?.message).toBe('Fayl yuklab olindi: Mega_report-demo.csv');
       expect(button()?.disabled).toBe(false);
-      expect(text(button())).toBe('Mega report');
+      expect(text(button())).toBe('Mega hisobot');
       for (const wrapper of wrappers.splice(0)) wrapper.unmount();
       vi.restoreAllMocks();
     }
@@ -933,13 +1068,12 @@ describe('Qoldiq page: the mega report', () => {
 });
 
 describe('Qoldiq page: the supplier filter (owner request 2026-11-13)', () => {
-  const supplierOptionsShown = (): string[] =>
-    Array.from(body().querySelectorAll('.fcb__list [role="option"]')).map((o) => text(o));
+  const supplierOptionsShown = (): Promise<string[]> => openFilterMenu('supplier-filter');
 
   it('lists every supplier of the answer with its product count', async () => {
     await mountStock('manager');
-    expect(supplierOptionsShown()).toEqual([
-      'Barcha postavshiklar',
+    expect(await supplierOptionsShown()).toEqual([
+      'Hammasi',
       'Beta system tm fbs1616 mahsulot',
       'alpha trade import1717 mahsulot',
     ]);
@@ -950,12 +1084,63 @@ describe('Qoldiq page: the supplier filter (owner request 2026-11-13)', () => {
       path: '/stock?supplier=Beta%20system%20tm%20fbs',
     });
     expect(codes()).toHaveLength(16);
-    expect(text(statusButton('all'))).toBe('Hammasi 16');
-    const field = body().querySelector<HTMLInputElement>('[data-testid="supplier-filter"] input');
-    expect(field?.value).toBe('Beta system tm fbs');
+    expect(presetCount('all')).toBe('16');
+    // The chip names the active supplier.
+    expect(text(body().querySelector('[data-chip="supplier"]'))).toContain('Beta system tm fbs');
+    expect(text(body().querySelector('[data-testid="supplier-filter"] .fmenu__value'))).toBe(
+      'Beta system tm fbs',
+    );
     // Back to the plain address: every row again.
     await router.push('/stock');
     await flushPromises();
     expect(codes()).toHaveLength(21);
+  });
+});
+
+describe('Qoldiq page: phone width (design 390)', () => {
+  // A phone: below 640px, so below 1024 and 1280 too.
+  function stubPhone(): void {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: /max-width/.test(query),
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('shows only the cards, and the lists in the "Filtrlar" sheet whose choices apply at once', async () => {
+    stubPhone();
+    const { router } = await mountStock('manager');
+    expect(rows()).toHaveLength(0);
+    expect(body().querySelectorAll('.grid .scard')).toHaveLength(21);
+    // No table / card switch and no list dropdowns on a phone.
+    expect(body().querySelector('[data-testid="category-filter"]')).toBeNull();
+    expect(buttons().some((b) => text(b) === 'Jadval')).toBe(false);
+
+    const open = body().querySelector<HTMLButtonElement>('[data-testid="filter-sheet-open"]');
+    if (!open) throw new Error('no filter button');
+    expect(open.getAttribute('aria-label')).toBe('Filtrlar, 0 ta faol');
+    await click(open);
+    const sheet = body().querySelector<HTMLElement>('[data-testid="filter-sheet"] [role="dialog"]');
+    if (!sheet) throw new Error('no filter sheet');
+    const brandRow = sheet.querySelector<HTMLButtonElement>('[data-list="brand"]');
+    if (!brandRow) throw new Error('no brand row');
+    await click(brandRow);
+    expect(brandRow.getAttribute('aria-expanded')).toBe('true');
+    const samsung = Array.from(sheet.querySelectorAll<HTMLButtonElement>('.fsheet__chip')).find(
+      (b) => text(b).startsWith('Samsung'),
+    );
+    if (!samsung) throw new Error('no Samsung chip');
+    await click(samsung);
+    expect(router.currentRoute.value.query.brand).toBe('Samsung');
+    const show = sheet.querySelector<HTMLButtonElement>('[data-testid="filter-sheet-show"]');
+    const shown = body().querySelectorAll('.grid .scard').length;
+    expect(text(show)).toBe(`${shown} ta tovarni ko'rsatish`);
+    await click(show as HTMLButtonElement);
+    expect(body().querySelector('[data-testid="filter-sheet"]')).toBeNull();
+    expect(open.getAttribute('aria-label')).toBe('Filtrlar, 1 ta faol');
   });
 });

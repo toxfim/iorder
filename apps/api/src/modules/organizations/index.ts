@@ -6,6 +6,7 @@ export {
   type MemberLeftResult,
   type MemberPresenceResult,
   type OrganizationChatTarget,
+  type OrderCustomer,
   type PricePostingPlan,
   type PricePostingRecipient,
   type TelegramGroupEvent,

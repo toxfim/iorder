@@ -126,6 +126,9 @@
 
   /* Stacking (specs.md section 4) */
   --z-sticky: 3;
+  /* A page's own fixed action bar (the staff order page on a tablet or phone): under every
+     dropdown, drawer, modal and toast. */
+  --z-action-bar: 4;
   --z-dropdown-layer: 5;
   --z-dropdown: 6;
   --z-drawer: 10;

@@ -134,6 +134,8 @@ const EXPECTED: ReadonlyArray<{
   },
   { action: 'SET_PAYMENT_METHOD', status: 'SUBMITTED', allowed: ['MANAGER'] },
   { action: 'SET_PAYMENT_PLAN', status: 'SUBMITTED', allowed: ['MANAGER'] },
+  // [C, owner 2026-11-20] only the manager creates an order on behalf of a customer.
+  { action: 'CREATE_ORDER_FOR_CUSTOMER', status: 'SUBMITTED', allowed: ['MANAGER'] },
   { action: 'CHANGE_OWN_PAYMENT_PLAN', status: 'SUBMITTED', allowed: ['SHOP_OWNER', 'SELLER'] },
   { action: 'UPDATE_PRICE_LIST', status: 'SUBMITTED', allowed: ['MANAGER', 'ADMIN'] },
   {

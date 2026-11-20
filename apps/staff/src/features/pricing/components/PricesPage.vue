@@ -1,19 +1,26 @@
 <script setup lang="ts">
-import { computed, ref, shallowRef, watch, type Ref } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+  type Ref,
+} from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { PriceListCurrency } from '@iorder/shared';
 import type { StaffPriceListWithRateResponse } from '@iorder/shared/staff-cost';
 import { useServices } from '@/app/services';
-import AppBadge from '@core/components/ui/AppBadge.vue';
 import AppButton from '@core/components/ui/AppButton.vue';
-import AppTabs from '@core/components/ui/AppTabs.vue';
+import AppDropdown from '@core/components/ui/AppDropdown.vue';
 import AppSegmented from '@/components/ui/AppSegmented.vue';
-import DataTable from '@/components/ui/DataTable.vue';
-import type { DataTableColumn } from '@/components/ui/data-table';
-import FilterCombobox from '@/components/ui/FilterCombobox.vue';
-import FilterPanel from '@/components/ui/FilterPanel.vue';
-import TableDensitySwitch from '@/components/ui/TableDensitySwitch.vue';
+import RowContextMenu, {
+  type RowMenuItem,
+  type RowMenuPoint,
+} from '@/components/ui/RowContextMenu.vue';
 import StaffIcon from '@/components/ui/StaffIcon.vue';
 import SearchField from '@core/components/ui/SearchField.vue';
 import StateView from '@core/components/ui/StateView.vue';
@@ -22,11 +29,14 @@ import { showToast } from '@core/composables/use-toast';
 import { useFormat } from '@core/i18n/use-format';
 import { ApiConflictError, ApiNotFoundError, PermissionDeniedError } from '@core/lib/api-errors';
 import { decimalSeparatorFor } from '@core/lib/format';
-import { compareMoney } from '@core/lib/money';
 import { describePricingError } from '@core/lib/price-errors';
+import { useMediaQuery } from '@/composables/use-media-query';
 import CategoryDropdown from '@/features/staff-cost/components/CategoryDropdown.vue';
-import CostCell from '@/features/staff-cost/components/CostCell.vue';
-import StockCell from '@/features/staff-cost/components/StockCell.vue';
+import FilterMenu from '@/features/staff-cost/components/FilterMenu.vue';
+import StockFilterSheet, {
+  type SheetList,
+} from '@/features/staff-cost/components/StockFilterSheet.vue';
+import StockPager from '@/features/staff-cost/components/StockPager.vue';
 import SupplyHistory from '@/features/staff-cost/components/SupplyHistory.vue';
 import UsdRateControl from '@/features/staff-cost/components/UsdRateControl.vue';
 import { useCostFormat } from '@/features/staff-cost/composables/use-cost-format';
@@ -35,15 +45,18 @@ import { useProductCategories } from '@/features/staff-cost/composables/use-prod
 import { useUrlState } from '@/features/staff-cost/composables/use-url-state';
 import {
   CATEGORY_ALL,
+  CATEGORY_NONE,
+  categoryTabId,
   countCategories,
   filterByCategory,
 } from '@/features/staff-cost/domain/category-filter';
 import { formatTenthsPercent, priceHint } from '@/features/staff-cost/domain/price-hint';
 import {
-  matchesSupplier,
-  SUPPLIER_ALL,
-  supplierOptions,
-} from '@/features/staff-cost/domain/supplier-filter';
+  DEFAULT_PAGE_SIZE,
+  pageSlice,
+  type PageSize,
+} from '@/features/staff-cost/domain/pagination';
+import { BRAND_ALL, brandOptions, matchesBrand } from '@/features/staff-cost/domain/stock-views';
 import {
   canEditPrices,
   canManagePhotos,
@@ -52,13 +65,28 @@ import {
 } from '@/features/staff-shell/price-access';
 import ProductPhotoDialog from '@/features/product-images/components/ProductPhotoDialog.vue';
 import ProductThumb from '@/features/product-images/components/ProductThumb.vue';
-import type { RowMenuItem } from '@/components/ui/RowContextMenu.vue';
 import AppConfirmDialog from '@core/components/ui/AppConfirmDialog.vue';
+import { changedAgo } from '../domain/changed-ago';
 import { pickName } from '../domain/localized-name';
-import { savedMessage } from '../domain/saved-message';
+import type { PriceRowView, PriceStockTone } from '../domain/price-row-view';
 import { alifUsd, amountsIn, toPriceRows, wholesaleUsd, type PriceRow } from '../domain/price-rows';
 import { priceTargetOf } from '../domain/price-target';
+import {
+  isPricePreset,
+  isPriceSort,
+  isPriceType,
+  matchesPreset,
+  matchesPriceType,
+  PRICE_PRESETS,
+  PRICE_SORTS,
+  PRICE_TYPES,
+  sortPrices,
+  type PricePreset,
+  type PriceSort,
+  type PriceType,
+} from '../domain/price-views';
 import { filterRows } from '../domain/row-filter';
+import { savedMessage } from '../domain/saved-message';
 import { translateDescribed } from '../domain/translate-error';
 import ManualProductDialog, { type ManualProductCreated } from './ManualProductDialog.vue';
 import MergeProductDialog, {
@@ -67,16 +95,24 @@ import MergeProductDialog, {
   type ProductMerged,
 } from './MergeProductDialog.vue';
 import NewProductMenu from './NewProductMenu.vue';
+import PriceCard from './PriceCard.vue';
 import PriceEditDialog, { type PriceSaved, type PriceTarget } from './PriceEditDialog.vue';
-import PriceHistoryBody from './PriceHistoryBody.vue';
+import PriceHistoryDrawer from './PriceHistoryDrawer.vue';
 import PriceImportDialog, { type PriceImported } from './PriceImportDialog.vue';
 import PriceListShareActions from './PriceListShareActions.vue';
+import PriceMobileRow from './PriceMobileRow.vue';
 import PricesSubHeader from './PricesSubHeader.vue';
+import PriceTable from './PriceTable.vue';
 
-// Design v8 "Narxlar": the published list with stock, cost and markup, and a per-product price
-// history. There are no drafts and no edit mode [C, 2026-10-28]: a row opens "Narxni
-// o'zgartirish" and its save publishes a new version at once. Products that have no price yet are
-// priced from Ostatok ("Ostatokdan qo'shish" opens it filtered to them).
+// "Narxlar" (design «Narxlar — yakuniy sahifa», approved 2026-11-19, at 1440 / 768 / 390): the
+// published list with ready views, search, Kategoriya / Brend / Narx turi, USD · so'm (the rate
+// always in sight), the table by default and the C3·a card as an option, pages and a back-to-top
+// button. There are no drafts and no edit mode [C, 2026-10-28]: "Tahrirlash" opens "Narxni
+// o'zgartirish" and its save publishes a new version at once. Products without a price are priced
+// from Ostatok ("Ostatokdan qo'shish" opens it filtered to them). Owner choices of 2026-11-19
+// over the design: the wholesale and Alif prices stay in USD in the so'm view (the api sends no
+// so'm figure for them), the supplier filter and the cost column are gone (the cost is in the
+// markup's hover), the history tab became the side panel ("Tarix").
 const { t, locale: i18nLocale } = useI18n();
 const {
   pricingApi,
@@ -89,8 +125,8 @@ const {
 } = useServices();
 const route = useRoute();
 const router = useRouter();
-const { formatMoney, formatMoneyWithCurrency } = useFormat();
-const { formatUsd } = useCostFormat();
+const { formatMoney } = useFormat();
+const { formatUsd, formatQuantity } = useCostFormat();
 
 // UI convenience only: the server refuses every call a role may not make.
 const roles = computed(() => currentUser.user.value?.staffRoles ?? []);
@@ -98,6 +134,14 @@ const costVisible = canViewCost(roles.value);
 const canEdit = canEditPrices(roles.value);
 const seesPriceAdmin = canViewPriceAdmin(roles.value);
 const photosAllowed = canManagePhotos(roles.value);
+
+// The design's breakpoints: below 1280 the cards are three a row, below 1024 the lists move into
+// the "Filtrlar" sheet, below 600 the phone list remains. Alif and "O'zgargan" fold away below
+// 1400, not 1280: beside the 232px menu the full table only fits from there (seen in the
+// browser, 2026-11-20), and a table that scrolls sideways hides its actions.
+const wide = useMediaQuery('(min-width: 1400px)', true);
+const desktop = useMediaQuery('(min-width: 1024px)', true);
+const phone = useMediaQuery('(max-width: 599px)', false);
 
 // --- the published list ------------------------------------------------------------------------
 
@@ -138,26 +182,13 @@ const unpricedCount = computed(() => productCategories.unpricedInStock.value);
 
 const rows = computed(() => toPriceRows(published.value));
 const versionNumber = computed(() => published.value?.version.number ?? null);
+const publishedAt = computed(() => published.value?.version.publishedAt ?? null);
 
-// Staff-added products (generated codes) [C, 2026-11-09]: counted in the subtitle, their own tab.
-const generatedRows = computed(() => rows.value.filter((row) => row.codeGenerated));
-const generatedCount = computed(() => generatedRows.value.length);
-// Without a wholesale sale price that tier's customers see the standard prices [P].
-const noWholesaleRows = computed(() => rows.value.filter((row) => row.wholesalePrice === null));
-
-const subtitle = computed(() => {
-  if (!published.value) return t('prices.subtitle');
-  const base = t('prices.listSummary', {
-    number: published.value.version.number,
-    count: published.value.items.length,
-  });
-  return generatedCount.value > 0
-    ? `${base} · ${t('staffCost.manual.subtitleCount', { count: generatedCount.value })}`
-    : base;
-});
+// Staff-added products (generated codes) [C, 2026-11-09].
+const generatedCount = computed(() => rows.value.filter((row) => row.codeGenerated).length);
 
 // The list items carry no category; the catalog does. Read once per list for the generated rows
-// (sheet products get theirs from the stock overview below), only by the roles that may read it.
+// (sheet products get theirs from the stock overview), only by the roles that may read it.
 const generatedCategories = shallowRef<ReadonlyMap<string, string | null>>(new Map());
 let categoriesRun = 0;
 async function loadGeneratedCategories(): Promise<void> {
@@ -170,216 +201,398 @@ async function loadGeneratedCategories(): Promise<void> {
       items.filter((p) => p.codeGenerated).map((p) => [p.id, p.category]),
     );
   } catch {
-    // A missing category only shortens the second line of the row.
+    // A missing category only leaves the product out of the category filter.
     if (mine === categoriesRun) generatedCategories.value = new Map();
   }
 }
 watch(generatedCount, () => void loadGeneratedCategories(), { immediate: true });
 
-// --- tabs, search, category --------------------------------------------------------------------
+// --- filters, all of them in the address (reload, Back and a pasted link keep the view) ---------
 
-// `nowholesale`: the products without a «Оптовик/Партнер» price [C, owner 2026-11-11].
-type Tab = 'list' | 'manual' | 'nowholesale' | 'history';
-const tab = ref<Tab>('list');
+// Older links: the tabs became ready views, the history tab the side panel.
+const legacyTab = route.query.tab;
+if (typeof legacyTab === 'string') {
+  const { tab: _legacy, ...rest } = route.query;
+  void _legacy;
+  const preset =
+    legacyTab === 'manual' ? 'byOrder' : legacyTab === 'nowholesale' ? 'noWholesale' : null;
+  void router.replace({ query: preset ? { ...rest, preset } : rest });
+}
+
+const preset = ref<PricePreset>('all');
 const search = ref('');
 const category = ref(CATEGORY_ALL);
-const supplier = ref(SUPPLIER_ALL);
-// Tab, category and search live in the address (reload and Back keep them).
-useUrlState('tab', tab, {
-  fallback: 'list',
-  isValid: (value) => value === 'history' || value === 'manual' || value === 'nowholesale',
-});
-useUrlState('category', category, { fallback: CATEGORY_ALL });
-useUrlState('q', search, { fallback: '', debounceMs: 300 });
-useUrlState('supplier', supplier, { fallback: SUPPLIER_ALL });
-const panelId = 'prices-panel';
-
+const brand = ref(BRAND_ALL);
+const priceType = ref<PriceType>('all');
+const sort = ref<PriceSort>('changed');
+type Layout = 'table' | 'cards';
+const layout = ref<Layout>('table');
 // Prices are kept in USD [owner 2026-10-29]; the so'm view shows them at the current rate.
 const shown = ref<PriceListCurrency>('USD');
+// A pasted "Tannarxdan past" link means nothing to a role without the cost: it falls back to all.
+useUrlState('preset', preset, {
+  fallback: 'all',
+  isValid: (value) => isPricePreset(value) && (costVisible || value !== 'belowCost'),
+});
+useUrlState('q', search, { fallback: '', debounceMs: 300 });
+useUrlState('category', category, { fallback: CATEGORY_ALL });
+useUrlState('brand', brand, { fallback: BRAND_ALL });
+useUrlState('type', priceType, { fallback: 'all', isValid: isPriceType });
+useUrlState('sort', sort, { fallback: 'changed', isValid: isPriceSort });
+useUrlState('layout', layout, { fallback: 'table', isValid: (value) => value === 'cards' });
 useUrlState('currency', shown as Ref<string>, {
   fallback: 'USD',
   isValid: (value) => value === 'UZS',
 });
-const currencyOptions = computed(() => [
-  { value: 'USD' as const, label: t('prices.currency.USD') },
-  { value: 'UZS' as const, label: t('prices.currency.UZS') },
-]);
-const sign = computed(() => t(`prices.currency.${shown.value}`));
-const amountsOf = (row: PriceRow) => amountsIn(row, shown.value);
-const money = (amount: string): string =>
-  shown.value === 'USD' ? formatUsd(amount) : formatMoney(amount);
-const moneyWithCurrency = (amount: string): string =>
-  shown.value === 'USD' ? formatUsd(amount) : formatMoneyWithCurrency(amount);
 
-const tabs = computed(() => [
-  { id: 'list', label: t('prices.tabs.all'), count: rows.value.length },
-  // The tab exists only while there is such a product (the address falls back to the list).
-  ...(generatedCount.value > 0
-    ? [{ id: 'manual', label: t('staffCost.manual.tab'), count: generatedCount.value }]
-    : []),
-  { id: 'nowholesale', label: t('prices.tabs.noWholesale'), count: noWholesaleRows.value.length },
-  { id: 'history', label: t('prices.historyLink') },
-]);
-function selectTab(id: string): void {
-  tab.value = id === 'history' || id === 'manual' || id === 'nowholesale' ? id : 'list';
-}
+// --- per row facts -------------------------------------------------------------------------------
 
+const nameOf = (row: PriceRow): string => pickName(row.names);
 const categoryOf = (row: PriceRow): string | null =>
   row.codeGenerated
     ? (generatedCategories.value.get(row.productId) ?? null)
     : (productCategories.byProduct.value.get(row.productId) ?? null);
-const tabRows = computed(() =>
-  tab.value === 'manual'
-    ? generatedRows.value
-    : tab.value === 'nowholesale'
-      ? noWholesaleRows.value
-      : rows.value,
-);
-// A staff-added product has no delivery line, so it is under no supplier.
-const suppliersOf = (row: PriceRow): readonly string[] =>
-  row.codeGenerated ? [] : (costs.rows.value.get(row.productId)?.suppliers ?? []);
-const searchedRows = computed(() => filterRows(tabRows.value, search.value));
-// The supplier counts follow the search; the category counts follow the supplier too.
-const supplierChoices = computed(() => supplierOptions(searchedRows.value.map(suppliersOf)));
-const categorized = computed(() =>
-  searchedRows.value
-    .filter((row) => matchesSupplier(suppliersOf(row), supplier.value))
-    .map((row) => ({
-      ...row,
-      category: categoryOf(row),
-    })),
-);
-const visible = computed(() => filterByCategory(categorized.value, category.value));
-const pricesIn = computed(() => t(`prices.pricesIn.${shown.value}`));
-const footer = computed(() =>
-  tab.value === 'manual'
-    ? t('staffCost.manual.info', { count: visible.value.length, currency: pricesIn.value })
-    : t(
-        'prices.info',
-        { count: visible.value.length, currency: pricesIn.value },
-        visible.value.length,
-      ),
-);
-const counts = computed(() => countCategories(categorized.value));
-const filtered = computed(
-  () =>
-    search.value.trim() !== '' ||
-    category.value !== CATEGORY_ALL ||
-    supplier.value !== SUPPLIER_ALL,
-);
-
-function resetFilters(): void {
-  search.value = '';
-  category.value = CATEGORY_ALL;
-  supplier.value = SUPPLIER_ALL;
-}
-
-type VisibleRow = PriceRow & { readonly category: string | null };
-
-const nameOf = (row: PriceRow): string => pickName(row.names);
-// A staff-added product has no deliveries: no stock, no cost, no markup (a dash in each column).
+// A staff-added product has no deliveries: no stock, no cost, no markup.
 const costOf = (row: PriceRow) =>
   row.codeGenerated ? null : (costs.rows.value.get(row.productId) ?? null);
-const markupOf = (row: PriceRow) => {
+const hintOf = (row: PriceRow) => {
   const usd = amountsIn(row, 'USD').price;
   return usd === null ? null : priceHint(usd, costOf(row)?.usd ?? null);
 };
-const markupText = (row: PriceRow): string | null => {
-  const hint = markupOf(row);
-  return hint
-    ? formatTenthsPercent(hint.markupTenths, decimalSeparatorFor(i18nLocale.value))
-    : null;
-};
-// The «Оптовик/Партнер» prices stay in USD in both currency views: the api sends no so'm figure
-// for them, and the page never converts money itself.
-const wholesaleOf = (row: PriceRow) => wholesaleUsd(row);
-const wholesaleMarkupText = (row: PriceRow): string | null => {
-  const usd = wholesaleOf(row).price;
-  const hint = usd === null ? null : priceHint(usd, costOf(row)?.usd ?? null);
-  return hint
-    ? formatTenthsPercent(hint.markupTenths, decimalSeparatorFor(i18nLocale.value))
-    : null;
-};
 
-// The «Alif factoring» prices, also in USD [C, owner 2026-11-12]. Without one the product is not
-// offered to that tier at all (no fallback), so the cell says so instead of "from standard".
-const alifOf = (row: PriceRow) => alifUsd(row);
+interface FilterRow extends PriceRow {
+  readonly category: string | null;
+  readonly belowCost: boolean;
+  readonly usdPrice: string | null;
+  readonly markupTenths: bigint | null;
+  readonly changedAt: string | null;
+}
 
-// The name column also holds the 40px photo and its 12px gap.
-const NAME_MIN_PX = 220;
-const columns = computed<DataTableColumn<VisibleRow>[]>(
-  () =>
-    [
-      {
-        key: 'product',
-        label: t('prices.columns.product'),
-        minWidth: `${NAME_MIN_PX}px`,
-        text: nameOf,
-        compare: (a, b) => nameOf(a).localeCompare(nameOf(b)),
-      },
-      ...(costVisible
-        ? [
-            { key: 'stock', label: t('staffCost.stock.column'), align: 'end', width: '96px' },
-            { key: 'cost', label: t('staffCost.cost.column'), align: 'end', width: '140px' },
-          ]
-        : []),
-      {
-        key: 'price',
-        label: `${t('prices.columns.price')} ${sign.value}`,
-        group: t('prices.columns.groupStandard'),
-        align: 'end',
-        width: '88px',
-        compare: (a, b) => compareMoney(amountsOf(a).price ?? '0', amountsOf(b).price ?? '0'),
-      },
-      {
-        key: 'deferred',
-        label: `${t('prices.columns.deferredPrice')} ${sign.value}`,
-        group: t('prices.columns.groupStandard'),
-        align: 'end',
-        width: '88px',
-        compare: (a, b) =>
-          compareMoney(amountsOf(a).deferredPrice ?? '0', amountsOf(b).deferredPrice ?? '0'),
-      },
-      {
-        key: 'wholesale',
-        label: `${t('prices.columns.price')} ${t('prices.currency.USD')}`,
-        group: t('prices.columns.groupWholesale'),
-        align: 'end',
-        width: '88px',
-        compare: (a, b) => compareMoney(wholesaleOf(a).price ?? '0', wholesaleOf(b).price ?? '0'),
-        hasSortValue: (row) => wholesaleOf(row).price !== null,
-      },
-      {
-        key: 'wholesaleDeferred',
-        label: `${t('prices.columns.deferredPrice')} ${t('prices.currency.USD')}`,
-        group: t('prices.columns.groupWholesale'),
-        align: 'end',
-        width: '88px',
-      },
-      {
-        key: 'alif',
-        label: `${t('prices.columns.price')} ${t('prices.currency.USD')}`,
-        group: t('prices.columns.groupAlif'),
-        align: 'end',
-        width: '88px',
-        compare: (a, b) => compareMoney(alifOf(a).price ?? '0', alifOf(b).price ?? '0'),
-        hasSortValue: (row) => alifOf(row).price !== null,
-      },
-      {
-        key: 'alifDeferred',
-        label: `${t('prices.columns.deferredPrice')} ${t('prices.currency.USD')}`,
-        group: t('prices.columns.groupAlif'),
-        align: 'end',
-        width: '88px',
-      },
-      ...(costVisible
-        ? [{ key: 'markup', label: t('prices.columns.markup'), align: 'end', width: '104px' }]
-        : []),
-    ] as DataTableColumn<VisibleRow>[],
+const filterable = computed<FilterRow[]>(() =>
+  rows.value.map((row) => {
+    const hint = hintOf(row);
+    return {
+      ...row,
+      category: categoryOf(row),
+      belowCost: hint?.belowCost ?? false,
+      usdPrice: amountsIn(row, 'USD').price,
+      markupTenths: hint?.markupTenths ?? null,
+      changedAt: row.lastChange?.changedAt ?? null,
+    };
+  }),
 );
-const tableMinWidth = computed(
-  () =>
-    `${columns.value.reduce((sum, c) => sum + (c.width ? Number.parseInt(c.width, 10) : 0), NAME_MIN_PX)}px`,
+
+// The design's search also finds a brand ("Nomi, Товар_ID yoki brend").
+const searched = computed(() => {
+  const needle = search.value.trim().toLowerCase();
+  if (needle === '') return filterable.value;
+  const byText = new Set(filterRows(filterable.value, search.value));
+  return filterable.value.filter(
+    (row) => byText.has(row) || (row.brand?.toLowerCase().includes(needle) ?? false),
+  );
+});
+// The option counts of each list follow the search only; the rows follow every filter.
+const brandChoices = computed(() => brandOptions(searched.value.map((row) => row.brand)));
+const typeChoices = computed(() =>
+  PRICE_TYPES.filter((type) => type !== 'all').map((type) => ({
+    value: type,
+    label: t(`prices.page.priceType.${type}`),
+    count: searched.value.filter((row) => matchesPriceType(row, type)).length,
+  })),
+);
+const byBrand = computed(() =>
+  searched.value.filter((row) => matchesBrand(row.brand, brand.value)),
+);
+const byType = computed(() =>
+  byBrand.value.filter((row) => matchesPriceType(row, priceType.value)),
+);
+const byPreset = computed(() => byType.value.filter((row) => matchesPreset(row, preset.value)));
+const filtered = computed(() => filterByCategory(byPreset.value, category.value));
+const sorted = computed(() => sortPrices(filtered.value, sort.value, nameOf));
+const counts = computed(() => countCategories(byPreset.value));
+
+// "Tannarxdan past" and the markup sort need the cost: only for the roles that see it.
+const presetKeys = computed(() =>
+  PRICE_PRESETS.filter((key) => costVisible || key !== 'belowCost'),
+);
+const presets = computed(() => {
+  const pool = filterByCategory(byType.value, category.value);
+  return presetKeys.value.map((key) => ({
+    key,
+    count: pool.filter((row) => matchesPreset(row, key)).length,
+    warn: key === 'noWholesale' || key === 'belowCost',
+  }));
+});
+const sortOptions = computed(() =>
+  PRICE_SORTS.filter((value) => costVisible || value !== 'markup').map((value) => ({
+    value,
+    label: t(`prices.page.sort.${value}`),
+  })),
+);
+// The cost word of "Tannarxdan past" lives in the staff-cost catalog (the bundle check).
+const presetLabel = (key: PricePreset): string =>
+  key === 'belowCost' ? t('staffCost.pricesPage.belowCost') : t(`prices.page.presets.${key}`);
+function setPriceType(value: string): void {
+  if (isPriceType(value)) priceType.value = value;
+}
+function setSort(value: string | null): void {
+  if (value !== null && isPriceSort(value)) sort.value = value;
+}
+
+// --- active filters as chips -------------------------------------------------------------------
+
+const categoryLabel = (id: string): string =>
+  id === CATEGORY_NONE
+    ? t('staffCost.categories.none')
+    : (counts.value.categories.find((c) => categoryTabId(c.category) === id)?.category ??
+      id.slice(2));
+
+type ChipKey = 'preset' | 'category' | 'brand' | 'type' | 'search';
+interface Chip {
+  readonly key: ChipKey;
+  readonly label: string;
+  readonly value: string;
+}
+const chips = computed<Chip[]>(() => {
+  const list: Chip[] = [];
+  // On a phone the ready views live in the sheet, so the chosen one is a chip too.
+  if (phone.value && preset.value !== 'all')
+    list.push({
+      key: 'preset',
+      label: t('prices.page.presets.label'),
+      value: presetLabel(preset.value),
+    });
+  if (category.value !== CATEGORY_ALL)
+    list.push({
+      key: 'category',
+      label: t('staffCost.stock.chip.category'),
+      value: categoryLabel(category.value),
+    });
+  if (brand.value !== BRAND_ALL)
+    list.push({ key: 'brand', label: t('staffCost.stock.chip.brand'), value: brand.value });
+  if (priceType.value !== 'all')
+    list.push({
+      key: 'type',
+      label: t('prices.page.priceType.label'),
+      value: t(`prices.page.priceType.${priceType.value}`),
+    });
+  if (search.value.trim() !== '')
+    list.push({
+      key: 'search',
+      label: t('staffCost.stock.chip.search'),
+      value: search.value.trim(),
+    });
+  return list;
+});
+
+function removeChip(key: ChipKey): void {
+  if (key === 'preset') preset.value = 'all';
+  if (key === 'category') category.value = CATEGORY_ALL;
+  if (key === 'brand') brand.value = BRAND_ALL;
+  if (key === 'type') priceType.value = 'all';
+  if (key === 'search') search.value = '';
+}
+
+/** "Tozalash": the lists, the search and the ready view (the design's "clear all"). */
+function clearFilters(): void {
+  search.value = '';
+  category.value = CATEGORY_ALL;
+  brand.value = BRAND_ALL;
+  priceType.value = 'all';
+  preset.value = 'all';
+}
+
+// --- the filter sheet below 1024px -------------------------------------------------------------
+
+const sheetOpen = ref(false);
+const sheetLists = computed<SheetList[]>(() => {
+  const all = t('staffCost.categories.all');
+  return [
+    {
+      key: 'category',
+      label: t('staffCost.stock.chip.category'),
+      selected: category.value,
+      current: category.value === CATEGORY_ALL ? all : categoryLabel(category.value),
+      choices: [
+        { value: CATEGORY_ALL, label: all },
+        ...counts.value.categories.map((c) => ({
+          value: categoryTabId(c.category),
+          label: c.category,
+          count: c.count,
+        })),
+        ...(counts.value.uncategorized > 0
+          ? [
+              {
+                value: CATEGORY_NONE,
+                label: t('staffCost.categories.none'),
+                count: counts.value.uncategorized,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      key: 'brand',
+      label: t('staffCost.stock.chip.brand'),
+      selected: brand.value,
+      current: brand.value === BRAND_ALL ? all : brand.value,
+      choices: [{ value: BRAND_ALL, label: all }, ...brandChoices.value],
+    },
+    {
+      key: 'type',
+      label: t('prices.page.priceType.label'),
+      selected: priceType.value,
+      current: t(`prices.page.priceType.${priceType.value}`),
+      choices: [{ value: 'all', label: all }, ...typeChoices.value],
+    },
+  ];
+});
+// The phone keeps the ready views in the sheet; the currency is in the sheet on every size.
+const sheetLead = computed<SheetList[]>(() =>
+  phone.value
+    ? [
+        {
+          key: 'preset',
+          label: t('prices.page.presets.label'),
+          selected: preset.value,
+          current: presetLabel(preset.value),
+          choices: presets.value.map((view) => ({
+            value: view.key,
+            label: presetLabel(view.key),
+            count: view.count,
+          })),
+        },
+      ]
+    : [],
+);
+const sheetTail = computed<SheetList[]>(() => [
+  {
+    key: 'currency',
+    label: t('prices.page.sheet.currency'),
+    selected: shown.value,
+    current: t(`prices.currency.${shown.value}`),
+    choices: [
+      { value: 'USD', label: 'USD' },
+      { value: 'UZS', label: t('prices.currency.UZS') },
+    ],
+  },
+]);
+
+function pickFromSheet(key: string, value: string): void {
+  if (key === 'category') category.value = value;
+  if (key === 'brand') brand.value = value;
+  if (key === 'type' && isPriceType(value)) priceType.value = value;
+  if (key === 'preset' && isPricePreset(value)) preset.value = value;
+  if (key === 'currency') shown.value = value === 'UZS' ? 'UZS' : 'USD';
+}
+
+// --- pages ---------------------------------------------------------------------------------------
+
+const page = ref(0);
+const pageSize = ref<PageSize>(DEFAULT_PAGE_SIZE);
+// Any change of what is listed starts again at the first page.
+watch([preset, search, category, brand, priceType, sort], () => {
+  page.value = 0;
+});
+const slice = computed(() => pageSlice(sorted.value.length, page.value, pageSize.value));
+const pageRows = computed(() => sorted.value.slice(slice.value.start, slice.value.end));
+
+// A phone always gets the compact list (the design: no table, no card grid).
+const shownLayout = computed<Layout | 'list'>(() => (phone.value ? 'list' : layout.value));
+
+// --- what a row shows ------------------------------------------------------------------------
+
+const usdTiers = computed(() => shown.value === 'UZS');
+const money = (amount: string): string =>
+  shown.value === 'USD' ? formatUsd(amount) : formatMoney(amount);
+/** The magnitude only ("4,0%"): the row puts its own "+" or "▼" in front. */
+const percent = (tenths: bigint): string =>
+  formatTenthsPercent(
+    tenths < 0n ? -tenths : tenths,
+    decimalSeparatorFor(i18nLocale.value),
+  ).replace(/^[+-]/, '');
+
+function stockOf(row: PriceRow): { text: string; tone: PriceStockTone } | null {
+  const cost = costOf(row);
+  if (!cost || cost.stock === null || cost.level === 'unknown') return null;
+  if (cost.level === 'out') return { text: t('prices.page.stockOut'), tone: 'out' };
+  return {
+    text: t('prices.page.stockPieces', { count: formatQuantity(cost.stock) }),
+    tone: cost.level,
+  };
+}
+
+/** "bugun 09:41", "kecha", "5 kun oldin" ... (Tashkent days); null for a malformed instant. */
+function agoText(instant: string): string | null {
+  const ago = changedAgo(instant, new Date());
+  if (!ago) return null;
+  if (ago.kind === 'today') return t('prices.page.changed.today', { time: ago.time });
+  if (ago.kind === 'yesterday') return t('prices.page.changed.yesterday');
+  return t(`prices.page.changed.${ago.kind}`, { count: ago.count }, ago.count);
+}
+const publishedWhen = computed(() => (publishedAt.value ? agoText(publishedAt.value) : null));
+
+function changedOf(row: PriceRow): PriceRowView['changed'] {
+  const change = row.lastChange;
+  const when = change ? agoText(change.changedAt) : null;
+  if (!change || !when) return null;
+  return { when, who: change.changedBy };
+}
+
+function viewOf(row: FilterRow): PriceRowView {
+  const standard = amountsIn(row, shown.value);
+  const standardUsd = amountsIn(row, 'USD');
+  const wholesale = wholesaleUsd(row);
+  const alif = alifUsd(row);
+  const hint = costVisible ? hintOf(row) : null;
+  const markupText = hint ? percent(hint.markupTenths) : null;
+  return {
+    row,
+    name: nameOf(row),
+    stock: costVisible ? stockOf(row) : null,
+    sale: standard.price === null ? null : money(standard.price),
+    deferred: standard.deferredPrice === null ? null : money(standard.deferredPrice),
+    belowCost: hint?.belowCost ?? false,
+    wholesale:
+      wholesale.price === null
+        ? {
+            price: standardUsd.price === null ? null : formatUsd(standardUsd.price),
+            deferred:
+              standardUsd.deferredPrice === null ? null : formatUsd(standardUsd.deferredPrice),
+            fromStandard: true,
+          }
+        : {
+            price: formatUsd(wholesale.price),
+            deferred: wholesale.deferredPrice === null ? null : formatUsd(wholesale.deferredPrice),
+            fromStandard: false,
+          },
+    alif:
+      alif.price === null
+        ? null
+        : {
+            price: formatUsd(alif.price),
+            deferred: alif.deferredPrice === null ? null : formatUsd(alif.deferredPrice),
+          },
+    markup:
+      hint && markupText !== null
+        ? {
+            short: hint.belowCost ? `▼ ${markupText}` : `+${markupText}`,
+            full: hint.belowCost
+              ? t('staffCost.pricesPage.markupBelow', { value: `-${markupText}` })
+              : t('prices.page.markupUp', { value: `+${markupText}` }),
+          }
+        : null,
+    changed: changedOf(row),
+  };
+}
+const pageViews = computed(() => pageRows.value.map(viewOf));
+
+const shownText = computed(() =>
+  t(
+    shown.value === 'UZS' ? 'prices.page.shownUzs' : 'prices.page.shown',
+    { count: sorted.value.length },
+    sorted.value.length,
+  ),
 );
 
 const loadErrorText = computed(() =>
@@ -389,7 +602,7 @@ const loadErrorText = computed(() =>
 // --- "Ostatokdan qo'shish": Ostatok, filtered to the products without a price -------------------
 
 function goToStock(): void {
-  void router.push({ name: 'staff-stock', query: { priced: 'unpriced' } });
+  void router.push({ name: 'staff-stock', query: { preset: 'unpriced' } });
 }
 
 // --- one product: the price dialog -----------------------------------------------------------
@@ -397,17 +610,24 @@ function goToStock(): void {
 const dialogOpen = ref(false);
 const target = shallowRef<PriceTarget | null>(null);
 
-function targetOf(row: PriceRow): PriceTarget {
-  return priceTargetOf(row, row, costOf(row)?.usd ?? null);
-}
-
-function openRow(row: PriceRow): void {
-  if (canEdit) {
-    target.value = targetOf(row);
-    dialogOpen.value = true;
+function openEdit(row: PriceRow): void {
+  if (!canEdit) {
+    showHistory(row.productId);
     return;
   }
-  showHistory(row.productId);
+  // A drawer and a modal are never stacked.
+  panelOpen.value = false;
+  target.value = priceTargetOf(row, row, costOf(row)?.usd ?? null);
+  dialogOpen.value = true;
+}
+
+/** Re-reads the list and gives the open dialog the fresh product (its fields merge it in). */
+async function reloadForDialog(): Promise<void> {
+  await load({ silent: true });
+  const open = target.value;
+  if (!dialogOpen.value || !open) return;
+  const row = rows.value.find((r) => r.productId === open.productId);
+  if (row) target.value = priceTargetOf(row, row, costOf(row)?.usd ?? null);
 }
 
 /** A new version was published from this page: every figure that follows the list is re-read. */
@@ -461,12 +681,13 @@ function onImported(result: PriceImported): void {
 }
 
 /** Opens the merge for a generated-code row; the "Sheetda bor" badge pre-fills its sheet match. */
-function startMerge(productId: string, target: MergeTargetHint | null = null): void {
+function startMerge(productId: string, hint: MergeTargetHint | null = null): void {
   const row = rows.value.find((r) => r.productId === productId);
   if (!row) return;
   dialogOpen.value = false;
+  panelOpen.value = false;
   mergeSource.value = { productId, productCode: row.productCode, name: nameOf(row) };
-  mergeTarget.value = target ?? row.sheetMatch;
+  mergeTarget.value = hint ?? row.sheetMatch;
   mergeOpen.value = true;
 }
 
@@ -487,13 +708,14 @@ function onMerged(result: ProductMerged): void {
   afterPublish();
 }
 
-// --- the row's context menu [owner 2026-11-12] -----------------------------------------------
-// Right click, Shift+F10 or the touch "⋯" button: the actions of one product, only those the
-// role may take (UI convenience; the server refuses the rest). Every item reuses an existing flow.
+// --- the row menu [owner 2026-11-12] -----------------------------------------------------------
+// Right click, Shift+F10 or "⋯": the actions of one product, only those the role may take (UI
+// convenience; the server refuses the rest). Every item reuses an existing flow.
 
 type RowMenuId = 'edit' | 'history' | 'photos' | 'stock' | 'copy' | 'merge' | 'remove';
 
-function rowMenuOf(row: VisibleRow): RowMenuItem<RowMenuId>[] {
+function rowMenuOf(view: PriceRowView): RowMenuItem<RowMenuId>[] {
+  const row = view.row;
   const items: RowMenuItem<RowMenuId>[] = [];
   if (canEdit) items.push({ id: 'edit', label: t('prices.dialog.titleEdit'), icon: 'pencil' });
   items.push({ id: 'history', label: t('prices.historyLink'), icon: 'history' });
@@ -512,19 +734,17 @@ function rowMenuOf(row: VisibleRow): RowMenuItem<RowMenuId>[] {
   return items.map((item) => ({ ...item, testId: `row-menu-${item.id}` }));
 }
 
-const rowMenuLabel = (row: VisibleRow): string =>
-  t('prices.rowMenu.label', { code: row.productCode, name: nameOf(row) });
-
-function onRowMenu(row: VisibleRow, id: string): void {
+function onRowMenu(view: PriceRowView, id: string): void {
+  const row = view.row;
   switch (id as RowMenuId) {
     case 'edit':
-      openRow(row);
+      openEdit(row);
       break;
     case 'history':
       showHistory(row.productId);
       break;
     case 'photos':
-      photoProduct.value = { productCode: row.productCode, name: nameOf(row) };
+      photoProduct.value = { productCode: row.productCode, name: view.name };
       photoOpen.value = true;
       break;
     case 'stock':
@@ -540,6 +760,37 @@ function onRowMenu(row: VisibleRow, id: string): void {
       askRemove(row);
       break;
   }
+}
+
+// The card grid has no table to hold the menu: one menu for every card, anchored to its "⋯".
+type MenuHandle = {
+  open: (at: RowMenuPoint, focusAfter: HTMLElement | null) => Promise<void>;
+  close: (giveFocusBack: boolean) => void;
+};
+const cardMenu = ref<MenuHandle | null>(null);
+const cardMenuView = shallowRef<PriceRowView | null>(null);
+let cardMenuAnchor: HTMLElement | null = null;
+
+function openCardMenu(view: PriceRowView, anchor: HTMLElement): void {
+  if (cardMenuView.value?.row.productId === view.row.productId && cardMenuAnchor === anchor) {
+    cardMenu.value?.close(true);
+    return;
+  }
+  cardMenuView.value = view;
+  cardMenuAnchor = anchor;
+  const rect = anchor.getBoundingClientRect();
+  void nextTick(() => cardMenu.value?.open({ x: rect.left, y: rect.bottom }, anchor));
+}
+
+// Right click, long press or the Context Menu key on a card: the menu opens at that point.
+function openCardMenuAt(
+  view: PriceRowView,
+  at: RowMenuPoint,
+  focusAfter: HTMLElement | null,
+): void {
+  cardMenuView.value = view;
+  cardMenuAnchor = focusAfter;
+  void nextTick(() => cardMenu.value?.open(at, focusAfter));
 }
 
 // The clipboard may be unavailable (insecure context, denied permission): the toast then shows
@@ -563,12 +814,12 @@ const photoProduct = shallowRef<{ readonly productCode: string; readonly name: s
 // PRICE_LIST_CHANGED) is re-read BEFORE the button unlocks and said so; the next press removes on
 // the new base. When the product is gone from the re-read list (a colleague removed it), the
 // dialog closes with a toast instead: a second publish would only make an empty version.
-const removeRow = shallowRef<VisibleRow | null>(null);
+const removeRow = shallowRef<PriceRow | null>(null);
 const removeOpen = ref(false);
 const removeBusy = ref(false);
 const removeError = ref<string | null>(null);
 
-function askRemove(row: VisibleRow): void {
+function askRemove(row: PriceRow): void {
   removeRow.value = row;
   removeError.value = null;
   removeOpen.value = true;
@@ -577,7 +828,7 @@ function askRemove(row: VisibleRow): void {
 const stillListed = (productId: string): boolean =>
   rows.value.some((entry) => entry.productId === productId);
 
-function closeAlreadyRemoved(row: VisibleRow): void {
+function closeAlreadyRemoved(row: PriceRow): void {
   removeOpen.value = false;
   removeError.value = null;
   showToast({ message: t('prices.rowMenu.alreadyRemoved', { name: nameOf(row) }) });
@@ -620,24 +871,23 @@ async function confirmRemove(): Promise<void> {
   }
 }
 
-// --- the history tab --------------------------------------------------------------------------
+// --- the side panel ("Tarix"): price history, supply history, the photo ---------------------------
 
-const selectedId = ref<string | null>(null);
-const historyRows = computed(() => visible.value);
-const selected = computed(
-  () =>
-    historyRows.value.find((row) => row.productId === selectedId.value) ??
-    historyRows.value[0] ??
-    null,
+const panelOpen = ref(false);
+// The id, not a copy of the row: after a reload (a new photo, a price) the panel shows the
+// current row.
+const panelId = ref<string | null>(null);
+const panelRow = computed<PriceRow | null>(
+  () => rows.value.find((row) => row.productId === panelId.value) ?? null,
 );
 
 function showHistory(productId: string): void {
   dialogOpen.value = false;
-  selectedId.value = productId;
-  tab.value = 'history';
+  panelId.value = productId;
+  panelOpen.value = true;
 }
 
-// `?history=<productId>` (from the Ctrl+K search) opens that product's history once the list is
+// `?history=<productId>` (from the Ctrl+K search) opens that product's panel once the list is
 // there, then drops the parameter so a reload or the back button does not reopen it.
 watch(
   () => [state.value, route.query.history] as const,
@@ -645,16 +895,162 @@ watch(
     if (current !== 'ready' || typeof productId !== 'string') return;
     const { history: _opened, ...rest } = route.query;
     void _opened;
-    void router.replace({ query: { ...rest, tab: 'history' } }).then(() => {
-      selectedId.value = productId;
-    });
+    void router.replace({ query: rest }).then(() => showHistory(productId));
   },
   { immediate: true },
 );
+
+// --- back to top ---------------------------------------------------------------------------------
+
+const showTop = ref(false);
+let scroller: Element | Document | null = null;
+function onScroll(event: Event): void {
+  const source = event.target;
+  const element =
+    source instanceof Document
+      ? source.scrollingElement
+      : source instanceof Element
+        ? source
+        : null;
+  if (!element) return;
+  scroller = source instanceof Document ? source : element;
+  showTop.value = element.scrollTop > 400;
+}
+function toTop(): void {
+  const element = scroller instanceof Document ? scroller.scrollingElement : scroller;
+  element?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+onMounted(() => document.addEventListener('scroll', onScroll, { capture: true, passive: true }));
+onBeforeUnmount(() => document.removeEventListener('scroll', onScroll, { capture: true }));
+
+// --- the phone's "⋯" header menu ---------------------------------------------------------------
+
+const moreOpen = ref(false);
 </script>
 
 <template>
   <section class="prices">
+    <PricesSubHeader class="prices-head" :title="t('prices.title')">
+      <!-- The design's line under the title: the published version, when, and the rate every so'm
+           figure is derived from. -->
+      <div class="subline">
+        <span v-if="versionNumber !== null" class="vpill" data-testid="list-version">{{
+          t('prices.page.published', { number: versionNumber })
+        }}</span>
+        <span v-if="publishedWhen" class="subline__when">{{ publishedWhen }}</span>
+      </div>
+      <!-- The design's header: Versiyalar · Guruhlarga yuborish · Excel · the orange "Ostatokdan
+           qo'shish"; "Yangi tovar" and the sibling pages (Tovarlar, Yangi modellar) in "⋯". A
+           tablet shows the first three as icons, a phone puts everything in "⋯". The menu stays
+           mounted (v-show): the share and add actions own dialogs. -->
+      <template #actions>
+        <span class="head-actions">
+          <template v-if="!phone">
+            <RouterLink
+              v-if="seesPriceAdmin"
+              class="hbtn"
+              :to="{ name: 'staff-price-versions' }"
+              :title="t('prices.tabs.versions')"
+            >
+              <StaffIcon name="archive" :size="16" /><span class="hbtn__label">{{
+                t('prices.tabs.versions')
+              }}</span>
+            </RouterLink>
+            <PriceListShareActions :can-post="canEdit" />
+          </template>
+          <!-- The orange action: N = active stock products without a published price. -->
+          <button
+            v-if="canEdit && costVisible && !phone"
+            type="button"
+            class="addbtn"
+            :aria-label="
+              unpricedCount > 0
+                ? t('prices.addFromStockLabel', { count: unpricedCount })
+                : undefined
+            "
+            data-testid="add-from-stock"
+            @click="goToStock"
+          >
+            <StaffIcon name="plus" :size="16" />
+            <span class="addbtn__label">{{ t('prices.addFromStock') }}</span>
+            <span v-if="unpricedCount > 0" class="addbtn__count num">{{ unpricedCount }}</span>
+          </button>
+          <span v-if="seesPriceAdmin || canEdit || !desktop" class="head-more-wrap">
+            <button
+              type="button"
+              class="head-more"
+              :aria-label="t('prices.page.moreActions')"
+              aria-haspopup="true"
+              :aria-expanded="moreOpen"
+              data-testid="head-more"
+              @click="moreOpen = !moreOpen"
+            >
+              <StaffIcon name="more" :size="20" />
+            </button>
+            <button
+              v-if="moreOpen"
+              type="button"
+              class="head-away"
+              tabindex="-1"
+              :aria-label="t('common.close')"
+              @click="moreOpen = false"
+            />
+            <span v-show="moreOpen" class="head-menu" data-testid="head-menu">
+              <button
+                v-if="canEdit && costVisible && phone"
+                type="button"
+                class="hbtn menu-add"
+                :aria-label="
+                  unpricedCount > 0
+                    ? t('prices.addFromStockLabel', { count: unpricedCount })
+                    : undefined
+                "
+                data-testid="add-from-stock"
+                @click="goToStock"
+              >
+                <span class="menu-add__label">{{ t('prices.addFromStock') }}</span>
+                <span v-if="unpricedCount > 0" class="menu-add__count num">{{
+                  unpricedCount
+                }}</span>
+              </button>
+              <template v-if="phone">
+                <RouterLink
+                  v-if="seesPriceAdmin"
+                  class="hbtn"
+                  :to="{ name: 'staff-price-versions' }"
+                >
+                  <StaffIcon name="archive" :size="16" />{{ t('prices.tabs.versions') }}
+                </RouterLink>
+                <PriceListShareActions :can-post="canEdit" />
+              </template>
+              <!-- Products the sheet does not have [C, 2026-11-09]: one by hand, or an Excel file. -->
+              <NewProductMenu
+                v-if="canEdit"
+                @single="manualOpen = true"
+                @import="importOpen = true"
+              />
+              <template v-if="seesPriceAdmin">
+                <RouterLink class="hbtn" :to="{ name: 'staff-products' }">
+                  <StaffIcon name="package" :size="16" />{{ t('prices.tabs.products') }}
+                </RouterLink>
+                <!-- The newer-model pairs the customer home draws on [C, 2026-11-09]. -->
+                <RouterLink
+                  class="hbtn"
+                  :to="{ name: 'staff-newer-models' }"
+                  data-testid="newer-models-link"
+                >
+                  <StaffIcon name="star" :size="16" />{{ t('newerModels.title') }}
+                </RouterLink>
+              </template>
+            </span>
+          </span>
+        </span>
+      </template>
+    </PricesSubHeader>
+    <!-- The rate every so'm figure is derived from, always in sight; a bar of its own under the
+         header, as its source and notices take up to three lines (owner 2026-11-09). -->
+    <UsdRateControl v-if="costVisible" class="ratebar" :can-edit="canEdit" />
+
     <StateView
       :state="state"
       :title="state === 'empty' ? t('prices.empty.title') : undefined"
@@ -680,448 +1076,332 @@ watch(
         </AppButton>
       </template>
 
-      <PricesSubHeader :title="t('prices.title')" :subtitle="subtitle">
-        <template #actions>
-          <PriceListShareActions :can-post="canEdit" />
-          <!-- Products the sheet does not have [C, 2026-11-09]: one by hand, or an Excel file. -->
-          <NewProductMenu v-if="canEdit" @single="manualOpen = true" @import="importOpen = true" />
-          <!-- The v8 orange action: N = active products without a published price. -->
-          <button
-            v-if="canEdit && costVisible"
-            type="button"
-            class="addbtn"
-            :aria-label="
-              unpricedCount > 0
-                ? t('prices.addFromStockLabel', { count: unpricedCount })
-                : undefined
-            "
-            data-testid="add-from-stock"
-            @click="goToStock"
-          >
-            <StaffIcon name="plus" :size="16" />
-            {{ t('prices.addFromStock') }}
-            <span v-if="unpricedCount > 0" class="addbtn__count num">{{ unpricedCount }}</span>
-          </button>
-        </template>
-      </PricesSubHeader>
-
-      <div class="tabrow">
-        <AppTabs
-          class="tabrow__tabs"
-          :model-value="tab"
-          :tabs="tabs"
-          :label="t('prices.tabs.ariaLabel')"
-          id-prefix="prices"
-          :panel-id="panelId"
-          @update:model-value="selectTab"
-        />
-        <!-- The sibling pages of Narxlar: links at the end of the tab row, so the action row above
-             keeps only what changes the price list and the table moves up. -->
-        <div v-if="seesPriceAdmin" class="tablinks">
-          <RouterLink class="tablink" :to="{ name: 'staff-price-versions' }">
-            <StaffIcon name="archive" :size="14" />
-            {{ t('prices.tabs.versions') }}
-          </RouterLink>
-          <RouterLink class="tablink" :to="{ name: 'staff-products' }">
-            <StaffIcon name="package" :size="14" />
-            {{ t('prices.tabs.products') }}
-          </RouterLink>
-          <!-- The newer-model pairs the customer home draws on [C, 2026-11-09]. -->
-          <RouterLink
-            class="tablink"
-            :to="{ name: 'staff-newer-models' }"
-            data-testid="newer-models-link"
-          >
-            <StaffIcon name="star" :size="14" />
-            {{ t('newerModels.title') }}
-          </RouterLink>
-        </div>
-      </div>
-
-      <FilterPanel class="toolbar">
-        <SearchField v-model="search" :placeholder="t('prices.search.placeholder')" label-hidden />
-        <CategoryDropdown
-          v-if="costVisible && productCategories.loaded.value"
-          v-model="category"
-          :counts="counts"
-        />
-        <!-- Supplier is cost-class data: only for the roles that load the cost columns. -->
-        <div v-if="costVisible" class="toolbar__supplier">
-          <FilterCombobox
-            v-model="supplier"
-            :options="supplierChoices"
-            :all-value="SUPPLIER_ALL"
-            :all-label="t('staffCost.supplierFilter.all')"
-            :label="t('staffCost.supplierFilter.label')"
-            :placeholder="t('staffCost.supplierFilter.search')"
-            :no-match-text="t('staffCost.supplierFilter.noMatch')"
-            :clear-label="t('staffCost.supplierFilter.clear')"
-            :unknown-label="t('staffCost.supplierFilter.unknown')"
-            :count-text="
-              (count: number) => t('staffCost.supplierFilter.productsCount', { count }, count)
-            "
-            data-testid="supplier-filter"
-          />
-        </div>
-        <!-- The rate every so'm figure below is derived from sits beside the $ / so'm switch. -->
-        <UsdRateControl v-if="costVisible" class="toolbar__rate" :can-edit="canEdit" />
-        <AppSegmented
-          v-model="shown"
-          class="currency"
-          size="sm"
-          :options="currencyOptions"
-          :label="t('prices.currency.label')"
-          data-currency-switch
-        />
-        <TableDensitySwitch v-if="tab !== 'history'" />
-      </FilterPanel>
-
-      <div :id="panelId" class="panel" role="tabpanel" :aria-labelledby="`prices-tab-${tab}`">
-        <template v-if="tab !== 'history'">
-          <p v-if="costs.state.value === 'error'" class="inline-error" role="alert">
-            <StaffIcon name="alert" :size="15" />
-            <span class="inline-error__text">{{ t('staffCost.cost.loadFailed') }}</span>
-            <AppButton variant="secondary" size="xs" @click="costs.reload()">
-              {{ t('state.retry') }}
-            </AppButton>
-          </p>
-          <div class="surface" :style="{ '--dt-min-width': tableMinWidth }">
-            <DataTable
-              :columns="columns"
-              :rows="visible"
-              :row-key="(row: VisibleRow) => row.productId"
-              :row-action="openRow"
-              :row-label="
-                (row: VisibleRow) =>
-                  `${row.productCode} ${nameOf(row)}: ${canEdit ? t('prices.dialog.titleEdit') : t('prices.historyLink')}`
-              "
-              :row-tone="(row: VisibleRow) => (row.isActive ? undefined : 'muted')"
-              :label="t('prices.tableLabel')"
-              :empty-text="t('prices.noMatch')"
-              :row-menu="rowMenuOf"
-              :row-menu-label="rowMenuLabel"
-              :density-toggle="false"
-              @row-menu-choose="onRowMenu"
+      <div class="list">
+        <!-- Ready views: one task each, with its count (on a phone they are in the sheet). -->
+        <section v-if="!phone" class="block" aria-labelledby="prices-presets-label">
+          <h2 id="prices-presets-label" class="block__label">
+            {{ t('prices.page.presets.label') }}
+          </h2>
+          <div class="views" role="group" aria-labelledby="prices-presets-label">
+            <button
+              v-for="view in presets"
+              :key="view.key"
+              type="button"
+              class="view"
+              :class="{ 'view--on': preset === view.key, 'view--warn': view.warn }"
+              :aria-pressed="preset === view.key"
+              :data-preset="view.key"
+              @click="preset = view.key"
             >
-              <template #lead="{ row }">
-                <ProductThumb
-                  :src="row.imageUrl"
-                  :large-src="row.imageLargeUrl"
-                  :alt="nameOf(row)"
-                />
-              </template>
-              <template #cell-product="{ row }">
-                <span class="product">
-                  <span class="product__line">
-                    <span class="name">{{ nameOf(row) }}</span>
-                    <AppBadge v-if="!row.isActive" tone="warning">{{
-                      t('prices.row.inactiveBadge')
-                    }}</AppBadge>
-                    <!-- A staff-added product: the sheet does not know it, so no stock is shown. -->
-                    <AppBadge
-                      v-if="row.codeGenerated"
-                      tone="info"
-                      :title="t('staffCost.manual.badgeHint')"
-                      data-testid="manual-badge"
-                      >{{ t('staffCost.manual.badge') }}</AppBadge
-                    >
-                    <!-- The sheet has a product with the same name: the likely merge target. -->
-                    <button
-                      v-if="row.codeGenerated && row.sheetMatch && canEdit"
-                      type="button"
-                      class="matchbtn"
-                      :title="
-                        t('staffCost.manual.sheetMatchHint', {
-                          name: row.sheetMatch.name,
-                          code: row.sheetMatch.productCode,
-                        })
-                      "
-                      :aria-label="
-                        t('staffCost.manual.sheetMatchHint', {
-                          name: row.sheetMatch.name,
-                          code: row.sheetMatch.productCode,
-                        })
-                      "
-                      data-testid="sheet-match-badge"
-                      @click.stop="startMerge(row.productId, row.sheetMatch)"
-                    >
-                      <AppBadge tone="accent">{{ t('staffCost.manual.sheetMatchBadge') }}</AppBadge>
-                    </button>
-                  </span>
-                  <span class="meta">
-                    <span class="mono code">{{ row.productCode }}</span>
-                    <template v-if="row.codeGenerated">
-                      <template v-if="row.category">
-                        <span aria-hidden="true">·</span>
-                        <span>{{ row.category }}</span>
-                      </template>
-                    </template>
-                    <template v-else-if="costVisible">
-                      <span aria-hidden="true">·</span>
-                      <span>{{ row.category ?? t('staffCost.categories.none') }}</span>
-                    </template>
-                  </span>
-                </span>
-              </template>
-              <template #cell-stock="{ row }">
-                <StockCell
-                  v-if="costOf(row)"
-                  :quantity="costOf(row)?.stock ?? null"
-                  :level="costOf(row)?.level ?? 'unknown'"
-                  :unit="row.unit"
-                />
-                <span
-                  v-else
-                  class="muted"
-                  :title="row.codeGenerated ? t('staffCost.manual.badgeHint') : undefined"
-                  >—</span
-                >
-              </template>
-              <template #cell-cost="{ row }">
-                <CostCell
-                  v-if="costOf(row)"
-                  :usd="costOf(row)?.usd ?? null"
-                  :uzs="costOf(row)?.uzs ?? null"
-                  :rate="costOf(row)?.rate ?? null"
-                  :recent="costOf(row)?.recent ?? []"
-                  :product-code="row.productCode"
-                />
-                <span v-else class="muted">—</span>
-              </template>
-              <template #cell-price="{ row }">
-                <b v-if="amountsOf(row).price !== null" class="num">{{
-                  money(amountsOf(row).price ?? '')
-                }}</b>
-                <span v-else class="muted">—</span>
-              </template>
-              <template #cell-deferred="{ row }">
-                <span v-if="amountsOf(row).deferredPrice !== null" class="num">{{
-                  money(amountsOf(row).deferredPrice ?? '')
-                }}</span>
-                <span v-else class="muted">—</span>
-              </template>
-              <template #cell-wholesale="{ row }">
-                <b v-if="wholesaleOf(row).price !== null" class="num" data-wholesale-price>{{
-                  formatUsd(wholesaleOf(row).price ?? '')
-                }}</b>
-                <span
-                  v-else
-                  class="muted hint-standard"
-                  :title="t('prices.row.fromStandardHint')"
-                  data-from-standard
-                  >{{ t('prices.row.fromStandard') }}</span
-                >
-              </template>
-              <template #cell-wholesaleDeferred="{ row }">
-                <span v-if="wholesaleOf(row).deferredPrice !== null" class="num">{{
-                  formatUsd(wholesaleOf(row).deferredPrice ?? '')
-                }}</span>
-                <span
-                  v-else-if="wholesaleOf(row).price === null"
-                  class="muted hint-standard"
-                  :title="t('prices.row.fromStandardHint')"
-                  >{{ t('prices.row.fromStandard') }}</span
-                >
-                <span v-else class="muted">—</span>
-              </template>
-              <template #cell-alif="{ row }">
-                <b v-if="alifOf(row).price !== null" class="num" data-alif-price>{{
-                  formatUsd(alifOf(row).price ?? '')
-                }}</b>
-                <span
-                  v-else
-                  class="muted"
-                  :title="t('prices.row.notOfferedAlifHint')"
-                  data-not-offered-alif
-                  >{{ t('prices.row.notOffered') }}</span
-                >
-              </template>
-              <template #cell-alifDeferred="{ row }">
-                <span v-if="alifOf(row).deferredPrice !== null" class="num">{{
-                  formatUsd(alifOf(row).deferredPrice ?? '')
-                }}</span>
-                <span v-else class="muted">—</span>
-              </template>
-              <template #cell-markup="{ row }">
-                <span
-                  v-if="markupText(row) !== null"
-                  class="num markup"
-                  :class="{ 'markup--low': markupOf(row)?.belowCost }"
-                  >{{ markupText(row) }}</span
-                >
-                <span v-else class="muted">—</span>
-                <span v-if="markupText(row) !== null" class="muted num markup-tier">
-                  / {{ wholesaleMarkupText(row) ?? '—' }}</span
-                >
-              </template>
-              <template #card="{ row }">
-                <!-- The card is the row's button: the photo is only a picture here, with an
-                     empty alt (the card already says the name). -->
-                <span class="card__main">
-                  <ProductThumb :src="row.imageUrl" alt="" :zoomable="false" />
-                  <span class="card__body">
-                    <span class="card__top">
-                      <b class="name">{{ nameOf(row) }}</b>
-                      <StaffIcon name="right" :size="14" class="card__chevron" />
-                    </span>
-                    <span class="meta">
-                      <span class="mono">{{ row.productCode }}</span>
-                      <span v-if="costVisible && row.category">· {{ row.category }}</span>
-                    </span>
-                    <span class="card__bottom">
-                      <b class="num card__price">{{
-                        amountsOf(row).price !== null
-                          ? moneyWithCurrency(amountsOf(row).price ?? '')
-                          : '—'
-                      }}</b>
-                      <span v-if="amountsOf(row).deferredPrice !== null" class="num meta"
-                        >{{ t('prices.dialog.deferredShort') }}:
-                        {{ money(amountsOf(row).deferredPrice ?? '') }}</span
-                      >
-                      <span v-if="markupText(row) !== null" class="num markup">{{
-                        markupText(row)
-                      }}</span>
-                    </span>
-                    <span class="meta num" data-card-wholesale>
-                      {{ t('prices.dialog.wholesaleShort') }}:
-                      {{
-                        wholesaleOf(row).price !== null
-                          ? formatUsd(wholesaleOf(row).price ?? '')
-                          : t('prices.row.fromStandard')
-                      }}
-                    </span>
-                    <span class="meta num" data-card-alif>
-                      {{ t('prices.dialog.alifShort') }}:
-                      {{
-                        alifOf(row).price !== null
-                          ? formatUsd(alifOf(row).price ?? '')
-                          : t('prices.row.notOffered')
-                      }}
-                    </span>
-                  </span>
-                </span>
-              </template>
-            </DataTable>
-            <div v-if="visible.length === 0 && filtered" class="reset">
-              <AppButton variant="secondary" size="xs" @click="resetFilters">
-                {{ t('staffCost.stock.resetFilters') }}
-              </AppButton>
-            </div>
+              <span class="view__top">
+                <span class="view__name">{{ presetLabel(view.key) }}</span>
+                <span class="view__count num">{{ view.count }}</span>
+              </span>
+              <span class="view__cap">{{ t(`prices.page.presets.${view.key}Cap`) }}</span>
+            </button>
           </div>
-          <p class="list-count" data-testid="list-footer">{{ footer }}</p>
-        </template>
+        </section>
 
-        <!-- v8 "Narxlar tarixi": the products on the left, the chosen one's changes on the right. -->
-        <div v-else class="history">
-          <div class="history__list surface">
-            <p v-if="historyRows.length === 0" class="history__empty">{{ t('prices.noMatch') }}</p>
-            <ul v-else class="hlist">
-              <li v-for="row in historyRows" :key="row.productId">
-                <button
-                  type="button"
-                  class="hrow"
-                  :class="{ 'hrow--on': selected?.productId === row.productId }"
-                  :aria-pressed="selected?.productId === row.productId"
-                  @click="selectedId = row.productId"
-                >
-                  <span class="hrow__text">
-                    <span class="name">{{ nameOf(row) }}</span>
-                    <span class="meta"
-                      ><span class="mono">{{ row.productCode }}</span></span
-                    >
-                  </span>
-                  <b class="num">{{
-                    amountsOf(row).price !== null ? money(amountsOf(row).price ?? '') : '—'
-                  }}</b>
-                </button>
-              </li>
-            </ul>
-          </div>
-
-          <aside v-if="selected" class="history__panel surface" :aria-label="nameOf(selected)">
-            <div class="hp__top">
-              <ProductThumb
-                :key="`p-${selected.productId}`"
-                :src="selected.imageUrl"
-                :large-src="selected.imageLargeUrl"
-                :alt="nameOf(selected)"
-                :size="56"
+        <section class="block block--filters" aria-labelledby="prices-filters-label">
+          <h2 id="prices-filters-label" class="block__label">
+            {{ t('prices.page.filtersLabel') }}
+          </h2>
+          <div class="frow">
+            <SearchField
+              v-model="search"
+              class="frow__search"
+              :placeholder="t('prices.page.searchPlaceholder')"
+              label-hidden
+            />
+            <template v-if="desktop">
+              <CategoryDropdown
+                v-if="costVisible && productCategories.loaded.value"
+                v-model="category"
+                :prefix="t('staffCost.stock.chip.category')"
+                :counts="counts"
               />
-              <div class="hp__head">
-                <span class="hp__name">{{ nameOf(selected) }}</span>
-                <span class="meta">
-                  <span class="mono">{{ selected.productCode }}</span>
-                  <template v-if="costVisible && selected.category">
-                    · {{ selected.category }}</template
-                  >
-                </span>
-              </div>
-            </div>
-            <dl class="facts">
-              <div class="fact">
-                <dt>{{ t('prices.columns.price') }}</dt>
-                <dd class="num">
-                  {{
-                    amountsOf(selected).price !== null
-                      ? moneyWithCurrency(amountsOf(selected).price ?? '')
-                      : '—'
-                  }}
-                </dd>
-                <dd v-if="amountsOf(selected).deferredPrice !== null" class="fact__sub num">
-                  {{ t('prices.dialog.deferredShort') }}:
-                  {{ money(amountsOf(selected).deferredPrice ?? '') }}
-                </dd>
-                <dd class="fact__sub num">
-                  {{ t('prices.dialog.wholesaleShort') }}:
-                  {{
-                    wholesaleOf(selected).price !== null
-                      ? formatUsd(wholesaleOf(selected).price ?? '')
-                      : t('prices.row.fromStandard')
-                  }}
-                </dd>
-                <dd class="fact__sub num">
-                  {{ t('prices.dialog.alifShort') }}:
-                  {{
-                    alifOf(selected).price !== null
-                      ? formatUsd(alifOf(selected).price ?? '')
-                      : t('prices.row.notOffered')
-                  }}
-                </dd>
-              </div>
-              <div v-if="costVisible" class="fact">
-                <dt>{{ t('staffCost.cost.column') }}</dt>
-                <dd class="num">
-                  <template v-if="costOf(selected)?.usd">
-                    {{ formatUsd(costOf(selected)?.usd ?? '0') }}
-                  </template>
-                  <template v-else>—</template>
-                </dd>
-                <dd v-if="markupText(selected) !== null" class="fact__sub">
-                  {{ t('prices.columns.markup') }} {{ markupText(selected) }}
-                </dd>
-              </div>
-            </dl>
-            <AppButton v-if="canEdit" variant="secondary" block @click="openRow(selected)">
-              <StaffIcon name="pencil" :size="14" />{{ t('prices.dialog.titleEdit') }}
-            </AppButton>
-            <p class="rule" role="note">
-              <StaffIcon name="lock" :size="15" />{{ t('prices.history.ruleNote') }}
-            </p>
-            <!-- The price history endpoint is for the people who change prices (403 otherwise). -->
-            <PriceHistoryBody
-              v-if="canEdit"
-              :key="`h-${selected.productId}-${versionNumber}`"
-              :product-id="selected.productId"
-            />
-            <SupplyHistory
-              v-if="costVisible"
-              :key="`s-${selected.productId}`"
-              :product-id="selected.productId"
-            />
-          </aside>
+              <FilterMenu
+                v-model="brand"
+                :options="brandChoices"
+                :all-value="BRAND_ALL"
+                :all-label="t('staffCost.categories.all')"
+                :label="t('staffCost.stock.chip.brand')"
+                :search-placeholder="t('staffCost.brandFilter.search')"
+                :no-match-text="t('staffCost.brandFilter.noMatch')"
+                :clear-label="t('staffCost.brandFilter.clear')"
+                :unknown-label="t('staffCost.brandFilter.unknown')"
+                :count-text="
+                  (count: number) => t('staffCost.supplierFilter.productsCount', { count }, count)
+                "
+                data-testid="brand-filter"
+              />
+              <FilterMenu
+                :model-value="priceType"
+                :options="typeChoices"
+                all-value="all"
+                :all-label="t('prices.page.priceType.all')"
+                :label="t('prices.page.priceType.label')"
+                :search-placeholder="t('prices.page.priceType.search')"
+                :no-match-text="t('prices.page.priceType.noMatch')"
+                :clear-label="t('prices.page.priceType.clear')"
+                :unknown-label="t('prices.page.priceType.all')"
+                :count-text="
+                  (count: number) => t('staffCost.supplierFilter.productsCount', { count }, count)
+                "
+                data-testid="price-type-filter"
+                @update:model-value="setPriceType"
+              />
+              <AppSegmented
+                v-model="shown"
+                class="currency"
+                :options="[
+                  { value: 'USD', label: 'USD' },
+                  { value: 'UZS', label: t('prices.currency.UZS') },
+                ]"
+                :label="t('prices.currency.label')"
+                data-currency-switch
+              />
+            </template>
+            <!-- The phone's one-tap currency switch beside the search (the design's 390). -->
+            <button
+              v-if="phone"
+              type="button"
+              class="frow__cur"
+              :aria-label="`${t('prices.currency.label')}: ${shown === 'USD' ? 'USD' : t('prices.currency.UZS')}`"
+              data-testid="currency-toggle"
+              @click="shown = shown === 'USD' ? 'UZS' : 'USD'"
+            >
+              {{ shown === 'USD' ? 'USD' : t('prices.currency.UZS') }}
+            </button>
+            <button
+              v-if="!desktop"
+              type="button"
+              class="frow__sheet"
+              :aria-label="t('staffCost.stock.filtersButton', { count: chips.length })"
+              aria-haspopup="dialog"
+              data-testid="filter-sheet-open"
+              @click="sheetOpen = true"
+            >
+              <StaffIcon name="filter" :size="20" />
+              <span v-if="chips.length > 0" class="frow__badge num" aria-hidden="true">{{
+                chips.length
+              }}</span>
+            </button>
+          </div>
+          <div
+            v-if="chips.length > 0"
+            class="chips"
+            role="group"
+            :aria-label="t('staffCost.stock.activeFilters')"
+          >
+            <span class="chips__count">{{
+              t('staffCost.stock.activeCount', { count: chips.length }, chips.length)
+            }}</span>
+            <span v-for="chip in chips" :key="chip.key" class="chip" :data-chip="chip.key">
+              <span
+                >{{ chip.label }}: <b>{{ chip.value }}</b></span
+              >
+              <button
+                type="button"
+                class="chip__x"
+                :aria-label="t('staffCost.stock.chip.remove', { label: chip.label })"
+                @click="removeChip(chip.key)"
+              >
+                <StaffIcon name="x" :size="12" />
+              </button>
+            </span>
+            <button type="button" class="chips__clear" @click="clearFilters">
+              {{ t('staffCost.stock.clearFilters') }}
+            </button>
+          </div>
+        </section>
+
+        <p v-if="costs.state.value === 'error'" class="inline-error" role="alert">
+          <StaffIcon name="alert" :size="15" />
+          <span class="inline-error__text">{{ t('staffCost.cost.loadFailed') }}</span>
+          <AppButton variant="secondary" size="xs" @click="costs.reload()">
+            {{ t('state.retry') }}
+          </AppButton>
+        </p>
+
+        <div class="rbar">
+          <span class="rbar__count" role="status" data-testid="list-footer">
+            {{ shownText }}
+            <span v-if="usdTiers" class="rbar__note">· {{ t('prices.page.tiersInUsd') }}</span>
+          </span>
+          <span v-if="!phone" class="rbar__tools">
+            <AppDropdown
+              :model-value="sort"
+              :options="sortOptions"
+              :label="t('prices.page.sort.label')"
+              align="right"
+              data-testid="prices-sort"
+              @update:model-value="setSort"
+            >
+              <template #value="{ selected }">
+                <span class="sortv"
+                  ><span class="sortv__k">{{ t('prices.page.sort.label') }}:</span>
+                  <b>{{ selected?.label }}</b></span
+                >
+              </template>
+            </AppDropdown>
+            <span class="toggle" role="group" :aria-label="t('staffCost.stock.layout.label')">
+              <button
+                type="button"
+                :class="{ 'toggle--on': layout === 'table' }"
+                :aria-pressed="layout === 'table'"
+                data-layout="table"
+                @click="layout = 'table'"
+              >
+                <StaffIcon name="sheet" :size="14" />{{ t('staffCost.stock.layout.table') }}
+              </button>
+              <button
+                type="button"
+                :class="{ 'toggle--on': layout === 'cards' }"
+                :aria-pressed="layout === 'cards'"
+                data-layout="cards"
+                @click="layout = 'cards'"
+              >
+                <StaffIcon name="package" :size="14" />{{ t('staffCost.stock.layout.cards') }}
+              </button>
+            </span>
+          </span>
         </div>
+
+        <div v-if="sorted.length === 0" class="nomatch" role="status">
+          <StaffIcon name="tags" :size="32" class="nomatch__icon" />
+          <b>{{ t('prices.page.noMatch') }}</b>
+          <AppButton variant="secondary" size="xs" @click="clearFilters">
+            {{ t('staffCost.stock.resetFilters') }}
+          </AppButton>
+        </div>
+
+        <PriceTable
+          v-else-if="shownLayout === 'table'"
+          :rows="pageViews"
+          :wide="wide"
+          :desktop="desktop"
+          :show-markup="costVisible"
+          :can-edit="canEdit"
+          :menu-of="rowMenuOf"
+          :label="t('prices.page.tableLabel')"
+          @open="(view) => showHistory(view.row.productId)"
+          @edit="(view) => openEdit(view.row)"
+          @history="(view) => showHistory(view.row.productId)"
+          @merge="(view) => startMerge(view.row.productId, view.row.sheetMatch)"
+          @menu="onRowMenu"
+        />
+
+        <ul
+          v-else-if="shownLayout === 'cards'"
+          class="grid"
+          :aria-label="t('prices.page.tableLabel')"
+        >
+          <li v-for="view in pageViews" :key="view.row.productId" class="grid__item">
+            <PriceCard
+              :view="view"
+              :can-edit="canEdit"
+              :show-tag-deferred="shown === 'USD'"
+              :menu-open="cardMenuView?.row.productId === view.row.productId"
+              @open="showHistory(view.row.productId)"
+              @edit="openEdit(view.row)"
+              @more="(anchor) => openCardMenu(view, anchor)"
+              @menu="(at, focusAfter) => openCardMenuAt(view, at, focusAfter)"
+            />
+          </li>
+        </ul>
+
+        <ul v-else class="plist" :aria-label="t('prices.page.tableLabel')">
+          <li v-for="view in pageViews" :key="view.row.productId">
+            <PriceMobileRow
+              :view="view"
+              :can-edit="canEdit"
+              @press="canEdit ? openEdit(view.row) : showHistory(view.row.productId)"
+            />
+          </li>
+        </ul>
+
+        <StockPager
+          v-if="sorted.length > 0"
+          v-model:page="page"
+          v-model:size="pageSize"
+          :total="sorted.length"
+        />
       </div>
     </StateView>
+
+    <div v-if="showTop" class="topw">
+      <button
+        type="button"
+        class="totop"
+        :aria-label="t('prices.page.toTop')"
+        data-testid="to-top"
+        @click="toTop"
+      >
+        <StaffIcon name="down" :size="20" class="totop__icon" />
+      </button>
+    </div>
+
+    <RowContextMenu
+      ref="cardMenu"
+      :label="
+        cardMenuView
+          ? t('prices.rowMenu.label', {
+              code: cardMenuView.row.productCode,
+              name: cardMenuView.name,
+            })
+          : ''
+      "
+      :items="cardMenuView ? rowMenuOf(cardMenuView) : []"
+      @choose="(id: string) => cardMenuView && onRowMenu(cardMenuView, id)"
+      @close="cardMenuView = null"
+    />
+
+    <StockFilterSheet
+      v-if="!desktop"
+      v-model="sheetOpen"
+      :lists="sheetLists"
+      :lead-groups="sheetLead"
+      :tail-groups="sheetTail"
+      :lists-label="t('prices.page.sheet.lists')"
+      chevron-right
+      :sorts="sortOptions"
+      :sort="sort"
+      :count="sorted.length"
+      @pick="pickFromSheet"
+      @sort="setSort"
+      @clear="clearFilters"
+    />
+
+    <PriceHistoryDrawer
+      v-model="panelOpen"
+      :product-id="panelRow?.productId ?? null"
+      :product-code="panelRow?.productCode ?? ''"
+      :name="panelRow ? nameOf(panelRow) : ''"
+      :show-price-history="seesPriceAdmin"
+    >
+      <ProductThumb
+        v-if="panelRow?.imageUrl"
+        :key="panelRow.productId"
+        class="panel-photo"
+        :src="panelRow.imageUrl"
+        :large-src="panelRow.imageLargeUrl"
+        :alt="nameOf(panelRow)"
+        :size="96"
+      />
+      <AppButton
+        v-if="panelRow && canEdit"
+        class="panel-edit"
+        @click="panelRow && openEdit(panelRow)"
+      >
+        <StaffIcon name="pencil" :size="15" />{{ t('prices.dialog.titleEdit') }}
+      </AppButton>
+      <SupplyHistory
+        v-if="panelRow && costVisible && !panelRow.codeGenerated"
+        :key="`s-${panelRow.productId}`"
+        :product-id="panelRow.productId"
+      />
+    </PriceHistoryDrawer>
 
     <PriceEditDialog
       v-if="canEdit"
@@ -1129,10 +1409,9 @@ watch(
       :product="target"
       :base-version-number="versionNumber"
       @saved="onSaved"
-      @stale="load({ silent: true })"
-      @history="showHistory"
+      @stale="reloadForDialog"
       @merge="startMerge"
-      @photos-changed="load({ silent: true })"
+      @photos-changed="reloadForDialog"
     />
     <template v-if="canEdit">
       <ManualProductDialog
@@ -1192,12 +1471,118 @@ watch(
   min-width: 0;
 }
 
-.addbtn:focus-visible {
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* --- header -------------------------------------------------------------------------------- */
+
+/* The design keeps the buttons on the title's right: the text side shrinks instead of pushing
+   them to a line of their own. */
+.prices-head {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.prices-head :deep(.head__text) {
+  flex: 1 0 auto;
+  min-width: 150px;
+}
+
+.prices-head :deep(.head__actions) {
+  position: relative;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.prices-head :deep(.head__title) {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.subline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 6px;
+  font-size: var(--fs-small);
+  color: var(--t2);
+}
+
+.vpill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: var(--fs-group);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.subline__when {
+  white-space: nowrap;
+}
+
+.ratebar {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.head-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.hbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-btn-sm);
+  background: var(--w);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.hbtn:hover {
+  background: var(--hov);
+}
+
+.hbtn:focus-visible,
+.addbtn:focus-visible,
+.head-more:focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
-/* v8 "Ostatokdan qo'shish": the orange 40px primary with a translucent count chip. */
+/* The orange "Ostatokdan qo'shish" with a translucent count chip. */
 .addbtn {
   display: inline-flex;
   align-items: center;
@@ -1226,247 +1611,511 @@ watch(
   font-size: var(--fs-meta);
 }
 
-/* The underline tab row with the versions link at its right end, on one hairline. */
-.tabrow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 24px;
-  box-shadow: inset 0 -1px 0 var(--e8);
-}
-
-.tabrow__tabs {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.tablinks {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 20px;
-  margin-left: auto;
-}
-
-.tablink {
+/* The phone's "⋯" and the menu its buttons open in. */
+.head-more {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 42px;
-  color: var(--t2);
-  font-size: var(--fs-small);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.tablink:hover {
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-btn-sm);
+  background: var(--w);
   color: var(--ink);
-}
-
-.tablink:focus-visible {
-  outline: 2px solid var(--acc);
-  outline-offset: 2px;
-  border-radius: var(--r-kbd);
-}
-
-/* One compact row: search and category on the left; the rate, the $ / so'm switch and the table
-   density on the right. */
-.toolbar {
-  align-items: center;
-  padding: var(--container-pad) var(--gap-card);
-}
-
-.toolbar__rate {
-  margin-left: auto;
-}
-
-.toolbar__supplier {
-  flex: 0 1 220px;
-  min-width: 160px;
-}
-
-.toolbar :deep(.search) {
-  flex: 1 1 220px;
-  max-width: 360px;
-}
-
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-card);
-  min-width: 0;
-}
-
-/* The table is the page: once scrolled under the top bar it fills the window and scrolls inside. */
-.surface {
-  min-width: 0;
-  --dt-max-h: calc(100vh - var(--topbar-h) - var(--safe-top, 0px) - var(--gap-card));
-}
-
-/* The dynamic viewport height leaves out a phone browser's bars; older browsers keep 100vh. */
-@supports (height: 100dvh) {
-  .surface {
-    --dt-max-h: calc(100dvh - var(--topbar-h) - var(--safe-top, 0px) - var(--gap-card));
-  }
-}
-
-.product {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.product__line {
-  display: flex;
-  /* The badges wrap under a long name instead of widening the column past 1440px. */
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 8px;
-  min-width: 0;
-}
-
-.name {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  font-size: var(--fs-group);
-  color: var(--t2);
-}
-
-.muted {
-  color: var(--t3);
-}
-
-/* The "Sheetda bor" pill is a button: it opens the merge with that sheet product filled in. */
-.matchbtn {
-  display: inline-flex;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: transparent;
-  font: inherit;
   cursor: pointer;
 }
 
-.matchbtn:hover {
-  filter: brightness(0.96);
+.head-away {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  border: 0;
+  background: transparent;
 }
 
-.matchbtn:focus-visible {
+.head-menu {
+  position: absolute;
+  top: 50px;
+  right: 0;
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-card);
+  background: var(--w);
+  box-shadow: var(--sh-dropdown);
+}
+
+.head-menu .hbtn,
+.head-menu .addbtn,
+.prices .head-menu :deep(.chip) {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  box-shadow: none;
+}
+
+.head-menu .hbtn {
+  background: transparent;
+}
+
+.head-menu .hbtn:hover {
+  background: var(--hov);
+}
+
+.head-menu :deep(.chipmenu) {
+  width: 100%;
+}
+
+/* The phone menu's first item: «Ostatokdan qo'shish» with the orange count. */
+.menu-add {
+  gap: 10px;
+  font-weight: 600;
+}
+
+.menu-add__count {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--acc);
+  color: var(--acc-on);
+  font-size: var(--fs-meta);
+}
+
+/* --- ready views and filters (the Qoldiq page's design system) ------------------------------ */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.block__label {
+  margin: 0;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--t2);
+}
+
+.views {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.view {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 170px;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-card);
+  background: var(--w);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.view:hover {
+  border-color: var(--d9);
+}
+
+.view:focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
-.markup {
-  font-weight: 500;
-  color: var(--green);
-}
-
-.markup--low {
-  color: var(--acc-fg);
-}
-
-/* A missing wholesale price: that tier's customers see the standard one. */
-.hint-standard {
-  font-size: var(--fs-meta);
-  font-style: italic;
-}
-
-.markup-tier {
-  font-size: var(--fs-meta);
-}
-
-.card__main {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.card__body {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.card__top,
-.card__bottom {
+.view__top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-
-.card__bottom {
-  align-items: flex-end;
-  margin-top: 8px;
-}
-
-.card__chevron {
-  flex: none;
-  color: var(--t3);
-}
-
-.card__price {
+  width: 100%;
   font-size: var(--fs-body);
+  font-weight: 600;
 }
 
-.reset {
-  display: flex;
-  justify-content: center;
-  padding: 12px;
-}
-
-.list-count {
-  margin: -4px 0 0;
-  padding: 0 4px;
+.view__count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ef);
+  font-family: var(--font-mono);
   font-size: var(--fs-meta);
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
   color: var(--t2);
+}
+
+.view--warn .view__count {
+  background: var(--acc-bg);
+  color: var(--acc-fg);
+}
+
+.view__cap {
+  font-size: var(--fs-small);
+  color: var(--t2);
+}
+
+.view--on {
+  border-color: var(--acc);
+  background: var(--acc-bg3);
+  box-shadow: 0 0 0 1px var(--acc);
+}
+
+.view--on .view__count {
+  background: var(--acc);
+  color: var(--acc-on);
+}
+
+.frow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.frow__search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.frow :deep(.catdd__field) {
+  height: 44px;
+}
+
+.frow :deep(.catdd__value) {
+  font-weight: 600;
+}
+
+.frow :deep(.catdd) {
+  flex: 0 1 210px;
+  min-width: 170px;
+}
+
+.frow :deep(.fmenu) {
+  flex: 0 1 210px;
+  min-width: 170px;
+}
+
+.currency {
+  flex: none;
+}
+
+.frow :deep(.search__box) {
+  height: 44px;
+}
+
+.frow__sheet {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-btn-sm);
+  background: var(--w);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.frow__cur {
+  flex: none;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-btn-sm);
+  background: var(--w);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.frow__cur:focus-visible,
+.frow__sheet:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+.frow__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--acc);
+  color: var(--acc-on);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chips__count {
+  margin-right: 2px;
+  font-size: var(--fs-small);
+  color: var(--t2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--e8);
+  border-radius: 999px;
+  background: var(--w);
+  font-size: var(--fs-small);
+  font-weight: 500;
+}
+
+.chip b {
+  font-weight: 600;
+}
+
+.chip__x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ef);
+  color: var(--t2);
+  cursor: pointer;
+}
+
+.chips__clear {
+  height: 32px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--acc-fg);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.chip__x:focus-visible,
+.chips__clear:focus-visible,
+.toggle button:focus-visible,
+.totop:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
 }
 
 .inline-error {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin: 0;
-  padding: 10px 14px;
-  border-radius: var(--r-btn-sm);
+  padding: 10px 12px;
+  border-radius: var(--r-input);
   background: var(--red-bg);
   color: var(--red);
   font-size: var(--fs-small);
 }
 
 .inline-error__text {
-  flex: 1 1 200px;
+  flex: 1;
 }
 
-/* The product a menu removal is about, inside its confirmation. */
+/* --- result bar: count, sort, table / cards -------------------------------------------------- */
+
+.rbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rbar__count {
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--t2);
+}
+
+.rbar__note {
+  color: var(--t3);
+}
+
+.rbar__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sortv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sortv__k {
+  color: var(--t2);
+}
+
+.toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-btn-sm);
+  background: var(--ef);
+}
+
+.toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: calc(var(--r-btn-sm) - 2px);
+  background: transparent;
+  color: var(--t2);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.toggle .toggle--on {
+  background: var(--w);
+  color: var(--ink);
+  box-shadow: var(--sh-dropdown);
+}
+
+/* --- results --------------------------------------------------------------------------------- */
+
+.nomatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 16px;
+  border: 1px solid var(--e8);
+  border-radius: var(--r-panel);
+  background: var(--w);
+  text-align: center;
+}
+
+.nomatch__icon {
+  color: var(--t3);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grid__item {
+  display: flex;
+  min-width: 0;
+}
+
+.grid__item > * {
+  flex: 1;
+}
+
+.plist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Back to top: sticks to the bottom right of the page while it scrolls. */
+.topw {
+  position: sticky;
+  bottom: 0;
+  z-index: 17;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  pointer-events: none;
+}
+
+.totop {
+  position: relative;
+  top: -72px;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin-right: 8px;
+  border: 1px solid var(--e8);
+  border-radius: 50%;
+  background: var(--w);
+  color: var(--ink);
+  box-shadow: var(--sh-dropdown);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.totop__icon {
+  transform: rotate(180deg);
+}
+
+.totop:hover {
+  background: var(--hov);
+}
+
+.panel-edit {
+  align-self: stretch;
+}
+
+.panel-photo {
+  align-self: flex-start;
+}
+
 .remove-target {
   display: flex;
   flex-direction: column;
   gap: 2px;
   margin: 0;
-  padding: 10px 12px;
-  border-radius: var(--r-btn-sm);
-  background: var(--f5);
 }
 
 .remove-target__name {
   font-weight: 600;
-  overflow-wrap: anywhere;
 }
 
 .remove-target__code {
@@ -1474,185 +2123,148 @@ watch(
   color: var(--t2);
 }
 
-/* --- history tab --- */
-.history {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 20px;
-}
+@media (max-width: 1439px) {
+  .head-actions > .hbtn .hbtn__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 
-.history__list,
-.history__panel {
-  border-radius: var(--r-card);
-  background: var(--w);
-  box-shadow: inset 0 0 0 1px var(--e8);
-  overflow: hidden;
-}
+  .head-actions > .hbtn {
+    width: 40px;
+    padding: 0;
+  }
 
-.history__list {
-  flex: 999 1 460px;
-}
-
-.history__panel {
-  position: sticky;
-  top: 96px;
-  display: flex;
-  flex: 1 1 340px;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 100%;
-  padding: 20px;
-}
-
-.history__empty {
-  margin: 0;
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--t2);
-  font-size: var(--fs-small);
-}
-
-.hlist {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.hlist li + li {
-  border-top: 1px solid var(--e8);
-}
-
-.hrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  min-height: 56px;
-  padding: 10px 20px;
-  border: 0;
-  background: var(--w);
-  color: var(--ink);
-  font-size: var(--fs-small);
-  text-align: left;
-  cursor: pointer;
-}
-
-.hrow:hover {
-  background: var(--f5);
-}
-
-.hrow:focus-visible {
-  outline: 2px solid var(--acc);
-  outline-offset: -2px;
-}
-
-.hrow--on,
-.hrow--on:hover {
-  background: var(--acc-bg);
-  box-shadow: inset 3px 0 0 var(--acc);
-}
-
-.hrow__text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.hp__top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.hp__head {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.hp__name {
-  font-size: var(--fs-body);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin: 0;
-}
-
-.fact {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: var(--r-btn-sm);
-  background: var(--f5);
-}
-
-.fact dt {
-  font-size: var(--fs-group);
-  color: var(--t2);
-}
-
-.fact dd {
-  margin: 0;
-  font-weight: 600;
-}
-
-.fact .fact__sub {
-  font-size: var(--fs-group);
-  font-weight: 400;
-  color: var(--t2);
-}
-
-.rule {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: var(--r-btn-sm);
-  background: var(--f5);
-  font-size: var(--fs-meta);
-  color: var(--t2);
-}
-
-.rule :deep(svg) {
-  flex: none;
-}
-
-@media (max-width: 720px) {
-  .addbtn {
-    flex: 1 1 auto;
+  .head-actions > :deep(.chipmenu > .chip),
+  .head-actions > :deep(.chip) {
+    gap: 0;
+    min-width: 40px;
+    padding-right: 0;
+    padding-left: 0;
     justify-content: center;
+    font-size: 0;
   }
 
-  .toolbar :deep(.search) {
-    max-width: none;
+  .head-actions > :deep(.chipmenu > .chip .chip__caret) {
+    display: none;
+  }
+}
+
+@media (max-width: 1279px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Tablet: the views become pills (the chosen one dark), the header buttons icon-only. */
+@media (max-width: 1023px) {
+  .list {
+    gap: 14px;
   }
 
-  .toolbar__rate {
-    margin-left: 0;
+  .block__label,
+  .view__cap,
+  .chips__count {
+    display: none;
   }
 
-  .history__panel {
-    position: static;
+  .frow {
+    flex-wrap: nowrap;
+  }
+
+  .frow__search {
+    flex: 1 1 0;
+  }
+
+  .view {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+  }
+
+  .view__top {
+    gap: 6px;
+    width: auto;
+    font-size: var(--fs-small);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .view__count,
+  .view--warn .view__count {
+    padding: 0;
+    background: transparent;
+    color: var(--t2);
+  }
+
+  .view--on {
+    border-color: var(--btn-ink-bg);
+    background: var(--btn-ink-bg);
+    color: var(--btn-ink-fg);
+    box-shadow: none;
+  }
+
+  .view--on .view__count {
+    background: transparent;
+    color: inherit;
+  }
+
+  .grid {
+    gap: 12px;
+  }
+
+  .totop {
+    top: -140px;
+  }
+}
+
+/* Phone: the search and the filter button first, the chips scroll sideways, the compact list. */
+@media (max-width: 599px) {
+  .prices-head :deep(.head__title) {
+    font-size: 20px;
+  }
+
+  .subline__when {
+    display: none;
+  }
+
+  .list {
+    gap: 10px;
+  }
+
+  .frow__sheet {
+    width: 48px;
+    height: 48px;
+  }
+
+  .chips {
+    flex-wrap: nowrap;
+    margin: 0 -16px;
+    padding: 0 16px;
+    overflow-x: auto;
+  }
+
+  .chip,
+  .chips__clear {
+    flex: none;
   }
 }
 
 @media (pointer: coarse) {
-  .addbtn,
-  .tablink {
+  .view,
+  .chip__x {
     min-height: 44px;
+  }
+
+  .chip__x {
+    min-width: 44px;
   }
 }
 </style>

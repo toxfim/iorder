@@ -285,6 +285,40 @@ describe('staff DTO', () => {
     expect(JSON.stringify(dto)).not.toContain('staff-user-1');
   });
 
+  it('gives the brand and the last price change with a name, never the stored actor id', () => {
+    const productId = list.items[0]!.product.id;
+    const at = new Date('2026-11-19T09:41:00Z');
+    const dto = toStaffPriceListResponse(
+      list,
+      new Map(),
+      new Map([['staff-user-1', 'Aziza Yusupova']]),
+      new Map(),
+      {
+        brands: new Map([[productId, 'Xiaomi']]),
+        lastChanges: new Map([
+          [productId, { versionNumber: 7, publishedAt: at, publishedBy: 'staff-user-1' }],
+        ]),
+      },
+    );
+    expect(dto.items[0]).toMatchObject({
+      brand: 'Xiaomi',
+      lastChange: { versionNumber: 7, changedAt: at.toISOString(), changedBy: 'Aziza Yusupova' },
+    });
+    const unnamed = toStaffPriceListResponse(list, new Map(), new Map(), new Map(), {
+      brands: new Map(),
+      lastChanges: new Map([
+        [productId, { versionNumber: 7, publishedAt: at, publishedBy: 'staff-user-1' }],
+      ]),
+    });
+    expect(unnamed.items[0]).toMatchObject({ brand: null, lastChange: { changedBy: null } });
+    expect(JSON.stringify(unnamed)).not.toContain('staff-user-1');
+    // Outside the current list (a version, a draft): neither is known.
+    expect(toStaffPriceListResponse(list, new Map(), new Map(), new Map()).items[0]).toMatchObject({
+      brand: null,
+      lastChange: null,
+    });
+  });
+
   it('gives the primary photo URLs of a product that has one, null otherwise', () => {
     const productId = list.items[0]!.product.id;
     const imageId = '0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b';

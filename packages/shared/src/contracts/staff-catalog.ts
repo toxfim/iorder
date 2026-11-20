@@ -155,6 +155,11 @@ export const stockOverviewItemSchema = z.strictObject({
   deliveryCount: z.number().int().nonnegative(),
   /** Distinct suppliers of the live delivery lines, sorted (staff supplier filter). */
   suppliers: z.array(z.string()),
+  /**
+   * The brand name: the one staff chose for the product, else the brand finder's match in the
+   * name (the same rule as the price list Excel file); null without one. Staff brand filter.
+   */
+  brand: z.string().nullable(),
   ...productPrimaryImageShape,
 });
 export type StockOverviewItem = z.infer<typeof stockOverviewItemSchema>;

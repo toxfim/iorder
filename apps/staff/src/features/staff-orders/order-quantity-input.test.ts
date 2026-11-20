@@ -48,7 +48,7 @@ async function openOrder(identity = 'manager', prepare?: (services: Services) =>
   wrappers.push(wrapper);
   await services.ordersStore.load();
   await services.directoryStore.load();
-  await waitFor(() => expect(text('.head__org')).toBe('Orion Mobile'));
+  await waitFor(() => expect(text('.client__name')).toBe('Orion Mobile'));
   await flushPromises();
   return { services };
 }

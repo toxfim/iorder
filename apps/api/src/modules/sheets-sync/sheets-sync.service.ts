@@ -20,8 +20,8 @@ import { DeliveryCostSource } from './delivery-cost-source.js';
 import { collectSheetRates, withDerivedUsdCost } from './derived-usd-cost.js';
 import { readRequiredColumns, SHEET_COLUMNS, type SheetRecord } from './sheet-columns.js';
 import { SheetSyncRunRepository, type SheetSyncRunRecord } from './sheet-sync-run.repository.js';
+import { SheetRowSelection } from './product-code-selection.js';
 import { capStoredSupplier, normalizeSheetText } from './sheet-values.js';
-import { findSupplierRule } from './supplier-filter.js';
 import { describeErrorSafely, safeErrorCode, toSyncError } from './sync-error.js';
 
 export interface RejectedRow {
@@ -69,6 +69,11 @@ export interface SyncReport {
   mismatches: { productCode: string; deliveryRef: string; differencePercent: string | null }[];
   /** Rows stored with a USD cost computed from UZS and the nearest sheet rate (see derived-usd-cost). */
   derivedUsdCosts: { productCode: string; deliveryRef: string }[];
+  /**
+   * Rows whose cost cells are only partly filled (owner 2026-11-18): stored as "cost pending" (null
+   * costs) so their stock counts, and listed here (refs only) so the sheet can be fixed.
+   */
+  incompleteCosts: { productCode: string; deliveryRef: string }[];
   /** The stock aggregate rewrites triggered by this sync (per product, not per delivery line). */
   stock: { created: number; updated: number; unchanged: number };
   /** Products whose category changed (it follows the product's latest delivery line). */
@@ -86,7 +91,8 @@ export interface SyncReport {
 export interface SkippedSupplier {
   /** Whitespace-collapsed; case differences are merged under the first spelling seen. */
   supplier: string;
-  reason: 'SUPPLIER_NOT_SELECTED';
+  /** Why the rows were skipped: their «Товар_ID» is not in the selection (product-code-selection.ts). */
+  reason: 'PRODUCT_NOT_SELECTED';
   count: number;
   /** True when the value contains zero-width/format characters that are invisible when printed. */
   hasInvisibleCharacters: boolean;
@@ -115,6 +121,7 @@ function newReport(): SyncReport {
     staleRefs: [],
     mismatches: [],
     derivedUsdCosts: [],
+    incompleteCosts: [],
     stock: { created: 0, updated: 0, unchanged: 0 },
     categoriesChanged: 0,
     removals: { requested: 0, dismissed: 0 },
@@ -150,6 +157,7 @@ export class SheetsSyncService {
     private readonly clock: Clock,
     private readonly removals: SupplyRemovalService,
     private readonly runs: SheetSyncRunRepository,
+    private readonly selection: SheetRowSelection,
   ) {}
 
   async syncCostReference(trigger: SheetSyncTrigger = 'MANUAL'): Promise<SyncReport> {
@@ -193,8 +201,8 @@ export class SheetsSyncService {
   }
 
   /**
-   * Supplier filter first (rows of other suppliers are skipped without being validated, so their
-   * broken cells cause no noise), then zod validation row by row: one bad row is reported, not
+   * Product-code selection first (rows of other products are skipped without being validated, so
+   * their broken cells cause no noise; skipped rows are still counted per supplier), then zod validation row by row: one bad row is reported, not
    * fatal. A row with a UZS cost but no USD cost and no rate gets them derived before validation.
    */
   private selectAndValidate(
@@ -210,7 +218,7 @@ export class SheetsSyncService {
       const key = supplier.toLowerCase();
       const entry = skipped.get(key) ?? {
         supplier,
-        reason: 'SUPPLIER_NOT_SELECTED',
+        reason: 'PRODUCT_NOT_SELECTED',
         count: 0,
         hasInvisibleCharacters: /[\u200b-\u200f\u2060\ufeff]/.test(supplier),
       };
@@ -227,9 +235,8 @@ export class SheetsSyncService {
     const mentioned = new Set<string>();
     const valid: ValidRow[] = [];
     records.forEach((record, index) => {
-      const rawSupplier = record[SHEET_COLUMNS.supplier];
-      if (findSupplierRule(rawSupplier) === null) {
-        skip(rawSupplier);
+      if (!this.selection.isSelected(record[SHEET_COLUMNS.productCode])) {
+        skip(record[SHEET_COLUMNS.supplier]);
         return;
       }
       const effective = withDerivedUsdCost(record, sheetRates);
@@ -263,6 +270,12 @@ export class SheetsSyncService {
       }
       seen.add(key);
       valid.push(parsed.data);
+      if (parsed.data.costIncomplete) {
+        report.incompleteCosts.push({
+          productCode: parsed.data.productCode,
+          deliveryRef: parsed.data.deliveryRef,
+        });
+      }
       if (effective !== record) {
         report.derivedUsdCosts.push({
           productCode: parsed.data.productCode,
@@ -451,6 +464,7 @@ export class SheetsSyncService {
       removalsRequested: report.removals.requested,
       removalsDismissed: report.removals.dismissed,
       reappearedAfterRemoval: report.reappearedAfterRemoval.length,
+      incompleteCosts: report.incompleteCosts.length,
     };
     return {
       startedAt,

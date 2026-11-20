@@ -15,6 +15,7 @@ import {
   PermissionDeniedError,
 } from '@core/lib/api-errors';
 import { fakeOrderId, fakeUuid } from '@core/lib/fake-ids';
+import { multiplyMoney } from '@core/lib/money';
 import { FAKE_PRODUCT_SEEDS } from '@/features/pricing/api/fake-price-fixtures';
 import { createFakeStaffOrders } from './fake-staff-orders-backend';
 
@@ -168,6 +169,21 @@ describe('what each role sees', () => {
       'IO-10487',
     ]);
     expect((await ordersApi.listOrders({ search: 'io-10489' })).orders).toHaveLength(1);
+  });
+
+  it('filters by the payment plan, a FULL-view fact refused to the warehouse and the driver', async () => {
+    const { ordersApi, as } = setup();
+    const all = (await ordersApi.listOrders({ limit: 100 })).orders;
+    const full = (await ordersApi.listOrders({ limit: 100, paymentPlan: 'FULL' })).orders;
+    const deferred = (await ordersApi.listOrders({ limit: 100, paymentPlan: 'DEFERRED' })).orders;
+    expect(full.length + deferred.length).toBe(all.length);
+    for (const order of full) expect(order.detail === 'FULL' && order.paymentPlan).toBe('FULL');
+    const counts = await ordersApi.countOrders({ paymentPlan: 'FULL' });
+    const counted = Object.values(counts.byStatus).reduce((sum, e) => sum + (e?.count ?? 0), 0);
+    expect(counted).toBe(full.length);
+    for (const who of ['warehouse', 'driver'] as const) {
+      await expect(as(who, () => ordersApi.listOrders({ paymentPlan: 'FULL' }))).rejects.toThrow();
+    }
   });
 });
 
@@ -691,5 +707,72 @@ describe('dev scenarios', () => {
     );
     expect(late).toBeInstanceOf(ApiConflictError);
     expect((late as ApiConflictError).reason).toBe('PAYMENT_PLAN_NOT_CHANGEABLE');
+  });
+});
+
+describe("the manager's new order (like the server, [C] owner 2026-11-20)", () => {
+  async function request(fake: ReturnType<typeof setup>) {
+    const { items } = await fake.as('manager', () => fake.ordersApi.listNewOrderCustomers({}));
+    const ideal = items.find((c) => c.name === 'Orion Mobile');
+    if (!ideal) throw new Error('expected Orion Mobile');
+    const catalog = await fake.as('manager', () =>
+      fake.ordersApi.getNewOrderCatalog(ideal.organizationId),
+    );
+    const first = catalog.items[0];
+    if (!first) throw new Error('expected a product');
+    return {
+      ideal,
+      first,
+      body: {
+        organizationId: ideal.organizationId,
+        placedByUserId: ideal.members[1]?.userId ?? '',
+        paymentPlan: 'FULL' as const,
+        lines: [{ productId: first.productId, quantity: '2' }],
+        expectedTotalAmount: multiplyMoney(first.unitPrice, 2),
+      },
+    };
+  }
+
+  it('is the manager’s alone', async () => {
+    const fake = setup();
+    for (const who of ['admin', 'accountant', 'warehouse', 'driver'] as const) {
+      await expect(
+        fake.as(who, () => fake.ordersApi.listNewOrderCustomers({})),
+      ).rejects.toBeInstanceOf(PermissionDeniedError);
+    }
+  });
+
+  it('creates a SUBMITTED order placed by the member, once per key', async () => {
+    const fake = setup();
+    const { body, ideal } = await request(fake);
+    const order = staffOrderSchema.parse(
+      await fake.as('manager', () => fake.ordersApi.createOrder(body, 'order-key-0001')),
+    );
+    if (order.detail !== 'FULL') throw new Error('expected the FULL view');
+    expect(order).toMatchObject({
+      status: 'SUBMITTED',
+      organizationId: ideal.organizationId,
+      placedBy: { userId: body.placedByUserId },
+    });
+    const again = await fake.as('manager', () =>
+      fake.ordersApi.createOrder(body, 'order-key-0001'),
+    );
+    expect(again.id).toBe(order.id);
+  });
+
+  it('refuses a member of another organization, DEFERRED without a price and a moved total', async () => {
+    const fake = setup();
+    const { body } = await request(fake);
+    const stranger = fake.as('manager', () =>
+      fake.ordersApi.createOrder({ ...body, placedByUserId: fakeUuid('u-201') }, 'order-key-0002'),
+    );
+    await expect(stranger).rejects.toBeInstanceOf(ApiConflictError);
+    expect(reasonOf(await stranger.catch((e: unknown) => e))).toBe('PLACER_NOT_MEMBER');
+    const moved = await fake
+      .as('manager', () =>
+        fake.ordersApi.createOrder({ ...body, expectedTotalAmount: '1.00' }, 'order-key-0003'),
+      )
+      .catch((e: unknown) => e);
+    expect(reasonOf(moved)).toBe('CART_TOTAL_CHANGED');
   });
 });

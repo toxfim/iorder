@@ -26,6 +26,7 @@ import type { UsdRateSnapshot } from '../usd-rate/usd-rate.service.js';
 import { toPieceCount, type OrderableStock } from '../orderable-stock.js';
 import { formatMoney } from '../price-money.js';
 import type {
+  LastPriceChange,
   PriceHistoryEntry,
   PriceListView,
   VersionSummaryView,
@@ -155,11 +156,20 @@ function imageUrls(imageId: string | null): {
 /** productId -> the sheet product a generated-code item stands for (absent = none). */
 export type SheetMatchMap = ReadonlyMap<string, SheetMatch>;
 
+/** Staff-only per-product facts of the list beyond its prices (empty outside the current list). */
+export interface StaffItemExtras {
+  readonly brands: ReadonlyMap<string, string | null>;
+  readonly lastChanges: ReadonlyMap<string, LastPriceChange>;
+}
+
+export const NO_STAFF_ITEM_EXTRAS: StaffItemExtras = { brands: new Map(), lastChanges: new Map() };
+
 export function toStaffPriceListResponse(
   list: PriceListView,
   images: PrimaryImageMap,
   names: PersonNames,
   sheetMatches: SheetMatchMap,
+  extras: StaffItemExtras = NO_STAFF_ITEM_EXTRAS,
 ): StaffPriceListResponse {
   return {
     version: toStaffVersionResponse(list.version, names),
@@ -174,8 +184,22 @@ export function toStaffPriceListResponse(
         item.product.codeGenerated ? sheetMatches.get(item.product.id) : undefined,
       ),
       names: item.product.translations.map((t) => ({ lang: t.lang, name: t.name })),
+      brand: extras.brands.get(item.product.id) ?? null,
+      lastChange: toPriceChange(extras.lastChanges.get(item.product.id), names),
       ...imageUrls(images.get(item.product.id) ?? null),
     })),
+  };
+}
+
+function toPriceChange(
+  change: LastPriceChange | undefined,
+  names: PersonNames,
+): StaffPriceListResponse['items'][number]['lastChange'] {
+  if (!change) return null;
+  return {
+    versionNumber: change.versionNumber,
+    changedAt: change.publishedAt.toISOString(),
+    changedBy: change.publishedBy === null ? null : (names.get(change.publishedBy) ?? null),
   };
 }
 
@@ -291,8 +315,9 @@ export function toStaffPriceListWithRate(
   images: PrimaryImageMap,
   names: PersonNames,
   sheetMatches: SheetMatchMap,
+  extras: StaffItemExtras = NO_STAFF_ITEM_EXTRAS,
 ): StaffPriceListWithRateResponse {
-  const base = toStaffPriceListResponse(list, images, names, sheetMatches);
+  const base = toStaffPriceListResponse(list, images, names, sheetMatches, extras);
   return { version: toStaffVersionWithRate(list.version, snapshots, names), items: base.items };
 }
 

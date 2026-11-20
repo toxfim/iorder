@@ -7,7 +7,7 @@ const report: SyncReport = {
   skippedBySupplierFilter: [
     {
       supplier: 'SECRET SUPPLIER',
-      reason: 'SUPPLIER_NOT_SELECTED',
+      reason: 'PRODUCT_NOT_SELECTED',
       count: 3,
       hasInvisibleCharacters: false,
     },
@@ -20,6 +20,7 @@ const report: SyncReport = {
   staleRefs: [],
   mismatches: [{ productCode: 'SECRET-CODE', deliveryRef: 'r', differencePercent: '12.5' }],
   derivedUsdCosts: [{ productCode: 'SECRET-CODE', deliveryRef: 'r' }],
+  incompleteCosts: [],
   stock: { created: 1, updated: 2, unchanged: 5 },
   categoriesChanged: 0,
   removals: { requested: 1, dismissed: 0 },

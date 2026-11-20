@@ -132,7 +132,7 @@ describe('A1: accountant queue', () => {
     buttonIn(card, 'Rad etish')?.click();
     await flushPromises();
     const confirm = Array.from(document.body.querySelectorAll('.modal button')).find(
-      (b) => squash(b.textContent) === 'Rad etish',
+      (b) => squash(b.textContent) === 'Ha, rad etish',
     ) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     const field = document.body.querySelector('textarea') as HTMLTextAreaElement;

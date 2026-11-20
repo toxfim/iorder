@@ -96,7 +96,10 @@ const productCode = z.unknown().transform((raw, ctx): string => {
  */
 const costDecimal = (maxIntegerDigits: number, maxFractionDigits: number, positive = false) =>
   z.unknown().transform((raw, ctx): string | null => {
-    if (normalizeSheetText(raw) === null) return null;
+    // Only a missing or blank cell is empty: anything else that is not a sheet string (a JSON
+    // number, say) is a broken cell and must reject the row, not pass as "cost pending".
+    const blank = raw === null || raw === undefined || typeof raw === 'string';
+    if (blank && normalizeSheetText(raw) === null) return null;
     const value = parseSheetNumber(raw);
     if (value === null) {
       ctx.addIssue({ code: 'custom', message: 'Not a valid non-negative number' });
@@ -120,14 +123,36 @@ const costDecimal = (maxIntegerDigits: number, maxFractionDigits: number, positi
  * with its quantities first, and the purchase price, the rate and the UZS cost are typed later.
  * Such a row is NOT rejected: all three empty means "cost pending", the line is stored with null
  * costs so its stock counts at once, and the next sync after the cells are typed fills them in.
- * One or two empty cells are still a broken row.
+ * Owner 2026-11-17: an empty rate ALONE is fine too (OMEGA Electronics lines carry USD and so'm costs
+ * but no rate): the line is stored without a rate and staff see its so'm cost.
+ * Owner 2026-11-18 ("even without the purchase amounts it must count for stock"): any OTHER partly
+ * empty set no longer rejects the row either. Its stock counts and its costs are stored as "cost
+ * pending" (all three null): the DB keeps USD and so'm together, and half a cost is never guessed
+ * into a whole one. The row is flagged `costIncomplete`, so the sync report lists it for the sheet
+ * to be fixed; once the cells are typed, the next sync fills the costs in. A cost cell that is
+ * written but is not a valid number still rejects the row: that is a typo, not a missing price.
  */
-const COST_HEADERS = [
-  SHEET_COLUMNS.costUsd,
-  SHEET_COLUMNS.usdRateUsed,
-  SHEET_COLUMNS.costUzs,
-] as const;
-export const COST_CELLS_MESSAGE = 'Cost cells must be all filled or all empty';
+type CostCells = Record<
+  typeof SHEET_COLUMNS.costUsd | typeof SHEET_COLUMNS.usdRateUsed | typeof SHEET_COLUMNS.costUzs,
+  string | null
+>;
+
+/** The cost cells as stored: as written when USD and so'm are both there, else all null. */
+function storedCosts(row: CostCells): {
+  costUsd: string | null;
+  usdRateUsed: string | null;
+  costUzs: string | null;
+  costIncomplete: boolean;
+} {
+  const costUsd = row[SHEET_COLUMNS.costUsd];
+  const usdRateUsed = row[SHEET_COLUMNS.usdRateUsed];
+  const costUzs = row[SHEET_COLUMNS.costUzs];
+  if (costUsd !== null && costUzs !== null) {
+    return { costUsd, usdRateUsed, costUzs, costIncomplete: false };
+  }
+  const allEmpty = costUsd === null && usdRateUsed === null && costUzs === null;
+  return { costUsd: null, usdRateUsed: null, costUzs: null, costIncomplete: !allEmpty };
+}
 
 /** The row schema for a given "now" (from the Clock; the date window depends on it). */
 export const createCostSourceRowSchema = (now: Date) =>
@@ -146,13 +171,6 @@ export const createCostSourceRowSchema = (now: Date) =>
       [SHEET_COLUMNS.costUzs]: costDecimal(16, 2),
       [SHEET_COLUMNS.availableQuantity]: decimal(15, 3),
     })
-    .superRefine((row, ctx) => {
-      const empty = COST_HEADERS.filter((header) => row[header] === null);
-      if (empty.length === 0 || empty.length === COST_HEADERS.length) return;
-      for (const header of empty) {
-        ctx.addIssue({ code: 'custom', path: [header], message: COST_CELLS_MESSAGE });
-      }
-    })
     .transform((row) => ({
       deliveredAt: row[SHEET_COLUMNS.deliveredAt],
       deliveryRef: row[SHEET_COLUMNS.deliveryRef],
@@ -162,9 +180,7 @@ export const createCostSourceRowSchema = (now: Date) =>
       productCode: row[SHEET_COLUMNS.productCode],
       productName: row[SHEET_COLUMNS.productName],
       deliveredQuantity: row[SHEET_COLUMNS.deliveredQuantity],
-      costUsd: row[SHEET_COLUMNS.costUsd],
-      usdRateUsed: row[SHEET_COLUMNS.usdRateUsed],
-      costUzs: row[SHEET_COLUMNS.costUzs],
+      ...storedCosts(row),
       availableQuantity: row[SHEET_COLUMNS.availableQuantity],
     }));
 

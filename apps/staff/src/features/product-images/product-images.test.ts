@@ -385,6 +385,7 @@ describe('the price dialog shows the photos to manager and admin only', () => {
     alifDeferredPrice: null,
     priceUzs: '32000.00',
     latestCostUsd: null,
+    imageUrl: null,
   };
 
   it.each([
@@ -423,8 +424,8 @@ describe('the price dialog shows the photos to manager and admin only', () => {
     wrappers.push(wrapper);
     await flushPromises();
     const save = (): HTMLButtonElement | undefined =>
-      Array.from(body().querySelectorAll<HTMLButtonElement>('button')).find(
-        (b) => text(b) === 'Saqlash',
+      Array.from(body().querySelectorAll<HTMLButtonElement>('button')).find((b) =>
+        text(b).startsWith('Saqlash'),
       );
     const input = body().querySelector<HTMLInputElement>(
       '[data-price-input] input, input[inputmode="numeric"]',
@@ -485,7 +486,7 @@ describe('thumbnails on the Narxlar and Qoldiq rows', () => {
   it('Qoldiq: the side panel shows the current photo after a reload, not a stale copy', async () => {
     const test = await mountPage('/stock');
     const row = rowFor('10482');
-    row.querySelector<HTMLElement>('.dt__link')?.click();
+    row.querySelector<HTMLElement>('.st__name')?.click();
     await flushPromises();
     const panelPhoto = (): string | null | undefined =>
       body().querySelector('.panel-photo img')?.getAttribute('src');
@@ -496,8 +497,12 @@ describe('thumbnails on the Narxlar and Qoldiq rows', () => {
     const other = product.images.find((i) => !i.isPrimary);
     if (!other) throw new Error('no second photo');
     await test.services.productImagesApi.setPrimary(other.imageId);
-    const inStock = body().querySelector<HTMLInputElement>('.check input');
-    inStock?.click();
+    // Dismissing a removal request reloads the stock list.
+    const dismiss = Array.from(body().querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === 'Rad etish',
+    );
+    if (!dismiss) throw new Error('no dismiss button');
+    dismiss.click();
     await flushPromises();
     expect(panelPhoto()).toBe(other.thumbUrl);
     expect(panelPhoto()).not.toBe(before);
@@ -514,7 +519,7 @@ describe('thumbnails on the Narxlar and Qoldiq rows', () => {
     );
     expect(thumb?.tagName).toBe('BUTTON');
     // Beside the row's own button, never inside it.
-    expect(thumb?.closest('.dt__link')).toBeNull();
+    expect(thumb?.closest('.dt__link, .st__name')).toBeNull();
     expect(thumb?.querySelector('img')?.getAttribute('loading')).toBe('lazy');
     const without = rowFor('10484');
     expect(

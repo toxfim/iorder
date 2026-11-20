@@ -132,6 +132,7 @@ export interface OrderMatchQuery {
   statuses?: readonly OrderStatus[];
   status?: OrderStatus;
   paymentStatus?: PaymentStatus;
+  paymentPlan?: PaymentPlan;
   organizationId?: string;
   placedByUserId?: string;
   /** Submitted in [from, to) (the caller owns the business day). */
@@ -285,6 +286,7 @@ function matchWhere(query: OrderMatchQuery): Prisma.OrderWhereInput {
       ...(query.status === undefined ? [] : [{ status: query.status }]),
       ...(query.statuses === undefined ? [] : [{ status: { in: [...query.statuses] } }]),
       ...(query.paymentStatus === undefined ? [] : [{ paymentStatus: query.paymentStatus }]),
+      ...(query.paymentPlan === undefined ? [] : [{ paymentPlan: query.paymentPlan }]),
       ...(query.organizationId === undefined ? [] : [{ organizationId: query.organizationId }]),
       ...(query.placedByUserId === undefined ? [] : [{ placedByUserId: query.placedByUserId }]),
       ...(query.submitted === undefined
@@ -408,6 +410,17 @@ export class OrdersRepository {
       include: WITH_ITEMS,
     });
     return row ? toRecord(row) : null;
+  }
+
+  /** The organizations of the latest orders, newest first (one row per organization). */
+  async recentOrganizationIds(take: number): Promise<string[]> {
+    const rows = await this.prisma.order.groupBy({
+      by: ['organizationId'],
+      _max: { submittedAt: true },
+      orderBy: { _max: { submittedAt: 'desc' } },
+      take,
+    });
+    return rows.map((row) => row.organizationId);
   }
 
   async nextOrderSequence(tx: Tx): Promise<bigint> {

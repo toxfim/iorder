@@ -17,6 +17,14 @@ import {
   type AllocationPreview,
   type SetOrderAllocationsRequest,
   approveOrderRequestSchema,
+  createStaffOrderRequestSchema,
+  newOrderCatalogQuerySchema,
+  newOrderCustomerQuerySchema,
+  type CreateStaffOrderRequest,
+  type NewOrderCatalogQuery,
+  type NewOrderCatalogResponse,
+  type NewOrderCustomerQuery,
+  type NewOrderCustomersResponse,
   editOrderItemsRequestSchema,
   orderDecisionWithCommentRequestSchema,
   orderDecisionWithReasonRequestSchema,
@@ -46,6 +54,12 @@ import { CurrentActor, RequirePermission } from '../../common/auth/route-access.
 import { ZodValidationPipe } from '../../common/validation/zod-validation.pipe.js';
 import { toStaffOrder, toStaffOrderList } from './dto/order.response.js';
 import { toStaffTimeline } from './dto/timeline.response.js';
+import {
+  toNewOrderCatalogResponse,
+  toNewOrderCustomersResponse,
+} from './dto/new-order.response.js';
+import { IdempotencyKey } from './idempotency-key.decorator.js';
+import { StaffNewOrderService } from './staff-new-order.service.js';
 import { StaffAudienceGuard } from './order-audience.guard.js';
 import { OrderDirectoryService } from './order-directory.service.js';
 import { OrderItemAllocationsService } from './order-item-allocations.service.js';
@@ -71,6 +85,7 @@ export class StaffOrdersController {
     private readonly list: StaffOrderListService,
     private readonly allocations: OrderItemAllocationsService,
     private readonly markedNotifications: MarkedOrderNotificationsService,
+    private readonly newOrder: StaffNewOrderService,
   ) {}
 
   // Declared before `:id`, which would otherwise take this path as an order id.
@@ -80,6 +95,35 @@ export class StaffOrdersController {
     @CurrentActor() actor: Actor,
   ): Promise<MarkedOrderNotificationListResponse> {
     return { items: await this.markedNotifications.list(actor) };
+  }
+
+  // The manager's new order [C, owner 2026-11-20]. Declared before `:id`.
+  @Get('new/customers')
+  @RequirePermission('CREATE_ORDER_FOR_CUSTOMER')
+  async listNewOrderCustomers(
+    @CurrentActor() actor: Actor,
+    @Query(new ZodValidationPipe(newOrderCustomerQuerySchema)) query: NewOrderCustomerQuery,
+  ): Promise<NewOrderCustomersResponse> {
+    return toNewOrderCustomersResponse(await this.newOrder.customers(actor, query));
+  }
+
+  @Get('new/catalog')
+  @RequirePermission('CREATE_ORDER_FOR_CUSTOMER')
+  async getNewOrderCatalog(
+    @CurrentActor() actor: Actor,
+    @Query(new ZodValidationPipe(newOrderCatalogQuerySchema)) query: NewOrderCatalogQuery,
+  ): Promise<NewOrderCatalogResponse> {
+    return toNewOrderCatalogResponse(await this.newOrder.catalogFor(actor, query.organizationId));
+  }
+
+  @Post()
+  @RequirePermission('CREATE_ORDER_FOR_CUSTOMER')
+  async createOrder(
+    @CurrentActor() actor: Actor,
+    @IdempotencyKey() key: string,
+    @Body(new ZodValidationPipe(createStaffOrderRequestSchema)) body: CreateStaffOrderRequest,
+  ): Promise<StaffOrder> {
+    return this.present(actor, await this.orders.createForCustomer(actor, key, body));
   }
 
   @Get()

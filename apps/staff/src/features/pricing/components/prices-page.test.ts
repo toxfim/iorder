@@ -80,13 +80,15 @@ function button(label: string, exact = true): HTMLButtonElement {
   return found;
 }
 const hasButton = (label: string): boolean => buttons().some((b) => text(b).includes(label));
-const tab = (label: string): HTMLButtonElement => {
-  const found = Array.from(body().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((el) =>
-    text(el).startsWith(label),
-  );
-  if (!found) throw new Error(`No tab "${label}"`);
+/** A ready view («Tayyor ko'rinishlar») by its key. */
+const view = (key: string): HTMLButtonElement => {
+  const found = body().querySelector<HTMLButtonElement>(`[data-preset="${key}"]`);
+  if (!found) throw new Error(`No view "${key}"`);
   return found;
 };
+/** The side panel ("Tarix") while it is open. */
+const panel = (): HTMLElement | null =>
+  body().querySelector('[data-testid="drawer"]:not(.drawer--closing)');
 // The v8 category dropdown: one trigger, a popup with a search field and the options.
 const categoryTrigger = (): HTMLButtonElement => {
   const el = body().querySelector<HTMLButtonElement>(
@@ -144,43 +146,49 @@ const rate = (): HTMLElement => {
 };
 
 describe('Narxlar: cost columns by role', () => {
-  it("shows stock and cost to the manager: dollars, so'm below, and the stock dot", async () => {
+  it('shows the manager the columns of the design: stock under the name, the markup with its cost', async () => {
     await mountPrices('manager');
-    // The sort arrow of a sortable header is not part of its name.
-    const headers = Array.from(body().querySelectorAll('thead tr:not(.dt__groups) th')).map((h) =>
-      text(h).replace(/\s*[↕↑↓]$/, ''),
-    );
+    const headers = Array.from(body().querySelectorAll('thead th')).map((h) => text(h));
     expect(headers).toEqual([
       'Tovar',
-      'Qoldiq',
-      'Tannarx',
-      'Цена $',
-      'Отсрочка $',
-      'Цена $',
-      'Отсрочка $',
-      'Цена $',
-      'Отсрочка $',
-      'Ustama',
-    ]);
-    // The price tiers [C, owner 2026-11-11; Alif 2026-11-12] each get a group header.
-    expect(Array.from(body().querySelectorAll('thead .dt__groups th')).map(text)).toEqual([
-      '',
-      'Standart',
+      "Standart · keyin to'lash",
       'Ulgurji / Hamkor',
       'Alif factoring',
-      '',
+      'Ustama',
+      "O'zgargan",
+      'Amallar',
     ]);
     const row = rowFor('10491');
-    expect(text(row)).toContain('$128,50');
-    expect(text(row)).toContain("1 625 525 so'm");
-    expect(text(row)).toContain('59'); // 34 + 25 pieces in stock
-    expect(row.querySelector('.stock-cell__dot--ok')).not.toBeNull();
-    // Colours are never the only signal.
-    expect(text(row.querySelector('.stock-cell .sr-only'))).toBe('Yetarli');
-    // Below 20 pieces amber; no deliveries at all: no cost and no stock colour.
-    expect(rowFor('10484').querySelector('.stock-cell__dot--low')).not.toBeNull();
-    expect(rowFor('10499').querySelector('.cost__usd')).toBeNull();
-    expect(rowFor('10499').querySelector('.stock-cell__dot--unknown')).not.toBeNull();
+    expect(text(row.querySelector('[data-sale]'))).toBe('$133,60');
+    // 34 + 25 pieces in stock, green; the colour is never the only signal (the figure is text).
+    expect(text(row.querySelector('.pt__stock--ok'))).toBe('59 dona');
+    // Markup of the USD price over the USD cost ($128.50), the full text on hover.
+    const markup = row.querySelector('[data-markup]');
+    expect(markup?.getAttribute('title')).toBe('Ustama +4,0%');
+    expect(text(markup).startsWith('+4,0%')).toBe(true);
+    // Below 20 pieces amber; no deliveries at all: no stock figure and no markup.
+    expect(rowFor('10484').querySelector('.pt__stock--low')).not.toBeNull();
+    expect(rowFor('10499').querySelector('.pt__stock')).toBeNull();
+    expect(rowFor('10499').querySelector('[data-markup]')).toBeNull();
+    // When the prices last changed, and by whom.
+    expect(text(row.querySelector('.pt__changed'))).not.toBe('—');
+  });
+
+  it('folds Alif and "O\'zgargan" below 1280px and the wholesale column below 1024px', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(min-width: 1024px)',
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    await mountPrices('manager');
+    expect(Array.from(body().querySelectorAll('thead th')).map((h) => text(h))).toEqual([
+      'Tovar',
+      "Standart · keyin to'lash",
+      'Ulgurji / Hamkor',
+      'Ustama',
+      'Amallar',
+    ]);
+    vi.unstubAllGlobals();
   });
 
   // The rate with its source and notices grew to three lines inside the actions and threw the
@@ -200,7 +208,9 @@ describe('Narxlar: cost columns by role', () => {
         publish.spy = vi.spyOn(services.pricingApi, 'publishChanges');
       },
     });
-    expect(text(rowFor('10491'))).toContain('$128,50');
+    expect(text(rowFor('10491').querySelector('[data-sale]'))).toBe('$133,60');
+    expect(rowFor('10491').querySelector('[data-markup]')).not.toBeNull();
+    expect(rowFor('10491').querySelector('[data-action="edit"]')).toBeNull();
     expect(body().querySelector('[data-testid="add-from-stock"]')).toBeNull();
     expect(body().querySelector('a[href="/products"]')).toBeNull();
     // The rate is shown but cannot be edited or re-pointed at the bank.
@@ -227,48 +237,31 @@ describe('Narxlar: cost columns by role', () => {
     });
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
     const content = text(body());
+    // Neither the "Tannarxdan past" view nor the markup sort: both need the cost.
     expect(content).not.toContain('Tannarx');
-    expect(content).not.toContain('Qoldiq');
+    expect(body().querySelector('[data-preset="belowCost"]')).toBeNull();
+    expect(content).not.toContain('dona');
+    expect(content).not.toContain('Ustama');
     expect(content).not.toContain('$128');
     expect(body().querySelector('[data-testid="usd-rate"]')).toBeNull();
-    // Supplier is cost-class data: no supplier filter either.
-    expect(body().querySelector('[data-testid="supplier-filter"]')).toBeNull();
+    expect(body().querySelector('[data-markup]')).toBeNull();
   });
 });
 
-describe('Narxlar: cost hover and the side panel', () => {
-  it('shows the last five deliveries on hover and on keyboard focus, and closes on Escape', async () => {
+describe('Narxlar: the side panel ("Tarix")', () => {
+  it('opens from a row click and from "Tarix", with the price and supply history', async () => {
     await mountPrices('manager');
-    const trigger = rowFor('10491').querySelector<HTMLButtonElement>('.cost__usd');
-    if (!trigger) throw new Error('no cost trigger');
-    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    rowFor('10491').querySelector('td')?.click();
     await flushPromises();
-    const tip = body().querySelector('[role="tooltip"]');
-    expect(tip).not.toBeNull();
-    expect(text(tip?.querySelector('.tip__title'))).toBe('Oxirgi 5 ta postavka');
-    const lines = Array.from(tip?.querySelectorAll('tbody tr') ?? []);
-    expect(lines).toHaveLength(5);
-    // Newest first: date, delivery id, supplier, dollars, the rate of that day, so'm.
-    expect(spaced(lines[0])).toMatch(/^16\.10\.2026 Z-\d+ .+ \$128,50 12 650 1 625 525$/);
-    expect(spaced(lines[4])).toContain('$133,50');
-    expect(trigger.getAttribute('aria-describedby')).toBe(tip?.id);
-
-    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await flushPromises();
-    expect(body().querySelector('[role="tooltip"]')).toBeNull();
-    trigger.dispatchEvent(new MouseEvent('mouseleave'));
-
-    trigger.dispatchEvent(new FocusEvent('focus'));
-    await flushPromises();
-    expect(body().querySelector('[role="tooltip"]')).not.toBeNull();
-    trigger.dispatchEvent(new FocusEvent('blur'));
-    await flushPromises();
-    expect(body().querySelector('[role="tooltip"]')).toBeNull();
-  });
-
-  it('has no tooltip for a product without deliveries', async () => {
-    await mountPrices('manager');
-    expect(rowFor('10499').querySelector('.cost__usd')).toBeNull();
+    expect(text(panel()?.querySelector('.product__code'))).toBe('10491');
+    expect(text(panel())).toContain('Postavka tarixi');
+    expect(text(panel())).toContain('keyingi buyurtmalarga');
+    expect(text(panel())).toContain("Narxni o'zgartirish");
+    await click(button('Yopish'));
+    await click(
+      rowFor('10484').querySelector<HTMLElement>('[data-action="history"]') as HTMLElement,
+    );
+    expect(text(panel()?.querySelector('.product__code'))).toBe('10484');
   });
 
   it('says so, with a retry, when the cost cannot be loaded, and keeps the prices', async () => {
@@ -278,10 +271,11 @@ describe('Narxlar: cost hover and the side panel', () => {
       },
     });
     expect(text(body().querySelector('.inline-error'))).toContain('Qoldiq va tannarxni yuklab');
-    expect(text(rowFor('10491'))).toContain('$133,60');
+    expect(text(rowFor('10491').querySelector('[data-sale]'))).toBe('$133,60');
+    expect(rowFor('10491').querySelector('[data-markup]')).toBeNull();
     await click(button(RETRY));
     expect(body().querySelector('.inline-error')).toBeNull();
-    expect(text(rowFor('10491'))).toContain('$128,50');
+    expect(rowFor('10491').querySelector('[data-markup]')).not.toBeNull();
   });
 });
 
@@ -413,6 +407,9 @@ const priceInput = (): HTMLInputElement => {
   if (!input) throw new Error('no price input in the dialog');
   return input;
 };
+/** Natively disabled, or closed with a reason (aria-disabled, still focusable). */
+const closed = (button: HTMLButtonElement): boolean =>
+  button.disabled || button.getAttribute('aria-disabled') === 'true';
 const dialogButton = (label: string): HTMLButtonElement => {
   const modal = dialog()?.closest('[data-testid="modal"]');
   const found = Array.from(modal?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((b) =>
@@ -421,45 +418,47 @@ const dialogButton = (label: string): HTMLButtonElement => {
   if (!found) throw new Error(`No dialog button "${label}"`);
   return found;
 };
-/** The DataTable's row action is the product button of the first cell (the photo sits beside it). */
+/** The row's "Tahrirlash" (the price dialog); a read-only role has none, so its row is clicked. */
 async function openRow(code: string): Promise<void> {
-  const trigger = rowFor(code).querySelector<HTMLElement>('.dt__link') ?? rowFor(code);
+  const trigger = rowFor(code).querySelector<HTMLElement>('[data-action="edit"]') ?? rowFor(code);
   await click(trigger);
 }
 
 describe('Narxlar: the v8 list', () => {
-  it('shows the subtitle, the two tabs and the versions link, with no edit mode or draft', async () => {
+  it('shows the version, the ready views and the versions link, with no edit mode or draft', async () => {
     await mountPrices('manager');
-    expect(text(body().querySelector('.head__subtitle'))).toBe("Narx ro'yxati v14 · 17 ta tovar");
-    expect(text(tab('Barcha mahsulotlar'))).toBe('Barcha mahsulotlar17');
-    expect(tab('Narxlar tarixi')).toBeTruthy();
-    expect(body().querySelector<HTMLAnchorElement>('a.tablink')?.getAttribute('href')).toBe(
-      '/versions',
-    );
-    expect(hasButton('Tahrirlash')).toBe(false);
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toBe("v14 · e'lon qilingan");
+    expect(
+      Array.from(body().querySelectorAll('[data-preset]')).map((v) =>
+        text(v.querySelector('.view__top')),
+      ),
+    ).toEqual(['Hammasi17', 'Buyurtma orqali0', 'Ulgurji narxsiz9', 'Tannarxdan past0']);
+    expect(view('all').getAttribute('aria-pressed')).toBe('true');
+    expect(body().querySelector<HTMLAnchorElement>('a[href="/versions"]')).not.toBeNull();
     expect(text(body())).not.toContain('Qoralama');
     expect(body().querySelector('input[data-price-input]')).toBeNull();
+    expect(text(body().querySelector('[data-testid="list-footer"]'))).toBe('17 ta tovar');
   });
 
-  it("shows the product as 'SKU · category', the prices in USD (so'm on the switch) and the markup", async () => {
+  it("shows the prices in USD, the wholesale and Alif ones in USD in the so'm view too", async () => {
     const { router } = await mountPrices('manager');
     const row = rowFor('10491');
-    expect(spaced(row.querySelector('.meta'))).toContain('10491 · Telefonlar');
-    const cells = row.querySelectorAll('td');
     // Prices are kept in USD [owner 2026-10-29]; the fake keeps 1 690 000 so'm as $133.60.
-    expect(text(cells[3])).toBe('$133,60');
-    // No deferred-payment price in the fixtures: the column says so.
-    expect(text(cells[4])).toBe('—');
+    expect(text(row.querySelector('[data-sale]'))).toBe('$133,60');
+    // No deferred-payment price in the fixtures: nothing under the price.
+    expect(row.querySelector('[data-deferred]')).toBeNull();
     // No wholesale price: that tier sees the standard one.
-    expect(text(cells[5])).toBe('standartdan');
-    // Markup of the USD price over the USD cost ($128.50), then the wholesale one (none).
-    expect(text(cells[9])).toBe('+4,0% / —');
-    expect(text(rowFor('10499').querySelectorAll('td')[9])).toBe('—');
+    expect(text(row.querySelector('[data-from-standard]'))).toBe('standart narx');
+    expect(text(row.querySelector('[data-alif-price]'))).toBe('$140,28');
 
-    // The so'm view: the same prices at the current rate (12 650), in the address too.
+    // The so'm view: the standard prices at the current rate (12 650), in the address too; the
+    // other tiers stay in USD (the api sends no so'm figure for them) and the page says so.
     await click(button("so'm"));
-    expect(text(rowFor('10491').querySelectorAll('td')[3])).toBe('1 690 040');
-    expect(text(body().querySelector('thead'))).toContain("Цена so'm");
+    expect(text(rowFor('10491').querySelector('[data-sale]'))).toBe('1 690 040');
+    expect(text(rowFor('10491').querySelector('[data-alif-price]'))).toBe('$140,28');
+    expect(text(body().querySelector('[data-testid="list-footer"]'))).toBe(
+      "17 ta tovar · narxlar so'mda · Ulgurji va Alif narxlari dollarda",
+    );
     expect(router.currentRoute.value.query.currency).toBe('UZS');
   });
 
@@ -481,26 +480,54 @@ describe("Narxlar: 'Qoldiqdan qo'shish'", () => {
     const { router } = await mountPrices('manager');
     const add = body().querySelector<HTMLButtonElement>('[data-testid="add-from-stock"]');
     if (!add) throw new Error('no add-from-stock button');
-    expect(text(add)).toBe("Qoldiqdan qo'shish 5");
+    expect(spaced(add)).toBe("Qoldiqdan qo'shish 5");
     await click(add);
     expect(router.currentRoute.value.name).toBe('staff-stock');
-    expect(router.currentRoute.value.query).toEqual({ priced: 'unpriced' });
+    expect(router.currentRoute.value.query).toEqual({ preset: 'unpriced' });
   });
 });
 
 describe('Narxlar: changing one price publishes at once', () => {
+  it('lists what a save changes and closes the save while an error is left (design T3)', async () => {
+    await mountPrices('manager');
+    await openRow('10491');
+    const diff = (): string => text(body().querySelector('[data-testid="price-diff"]'));
+    expect(diff()).toBe("Hali hech narsa o'zgarmadi");
+    expect(closed(dialogButton('Saqlash · v15'))).toBe(true);
+    await type(priceInput(), '139');
+    expect(diff()).toContain('Standart narx');
+    expect(diff()).toContain('$133,60');
+    expect(diff()).toContain('$139,00');
+    expect(body().querySelector('[data-diff="markup"]')).not.toBeNull();
+    expect(closed(dialogButton('Saqlash · v15'))).toBe(false);
+    const wholesaleDeferred = dialog()?.querySelector<HTMLInputElement>(
+      '[data-wholesale-deferred-price-input] input',
+    );
+    if (!wholesaleDeferred) throw new Error('no wholesale deferred input');
+    await type(wholesaleDeferred, '135');
+    expect(text(body().querySelector('[data-testid="price-errors"]'))).toBe(
+      "1 ta xato: Ulgurji / Hamkor keyin to'lash narxi ulgurji narxsiz bo'lmaydi.",
+    );
+    expect(closed(dialogButton('Saqlash · v15'))).toBe(true);
+    expect(dialogButton('Saqlash · v15').title).toBe('1 ta xato tuzatilmagan');
+    // Still focusable for its reason, but a press saves nothing.
+    await click(dialogButton('Saqlash · v15'));
+    expect(dialog()).not.toBeNull();
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v14 ');
+  });
+
   it('opens the dialog from a row with the current price and cost', async () => {
     await mountPrices('manager');
     await openRow('10491');
     expect(text(dialog())).toContain("Narxni o'zgartirish");
-    expect(text(dialog())).toContain('$133,60');
-    // The current price in so'm at the rate, and the USD cost.
-    expect(text(dialog())).toContain("1 690 040 so'm");
-    expect(text(dialog())).toContain('$128,50');
+    // The header names the product and its USD cost (design T3).
+    expect(text(body().querySelector('[data-testid="price-dialog-sub"]'))).toBe(
+      '10491 · Samsung Galaxy A15 4/128GB · tannarx $128,50',
+    );
     // The input uses the language's decimal separator.
     expect(priceInput().value).toBe('133,6');
     // Same price: nothing to save.
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
   });
 
   it('publishes a new version with this one change, toasts it and shows the new price', async () => {
@@ -532,8 +559,8 @@ describe('Narxlar: changing one price publishes at once', () => {
     expect(useToast().toast.value?.message).toMatch(
       /^Narxlar saqlandi · v15 · .+, 1 ta nofaol tovar ro'yxatdan chiqarildi$/,
     );
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v15");
-    expect(text(rowFor('10483').querySelectorAll('td')[3])).toBe('$17,00');
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v15 ');
+    expect(text(rowFor('10483').querySelector('[data-sale]'))).toBe('$17,00');
     expect(services.priceVersionStore.version.value?.number).toBe(15);
   });
 
@@ -548,7 +575,7 @@ describe('Narxlar: changing one price publishes at once', () => {
     await openRow('10491');
     expect(cashInput().value).toBe('');
     await type(cashInput(), '12,5x');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(cashInput(), '137.5');
     await click(dialogButton('Saqlash'));
     expect(publish.mock.calls[0]?.[0].upserts).toEqual([
@@ -563,15 +590,14 @@ describe('Narxlar: changing one price publishes at once', () => {
         alifDeferredPrice: '146.96',
       },
     ]);
-    expect(text(rowFor('10491').querySelectorAll('td')[4])).toBe('$137,50');
+    expect(text(rowFor('10491').querySelector('[data-deferred]'))).toBe('keyin $137,50');
 
     await openRow('10491');
     expect(cashInput().value).toBe('137,5');
-    expect(text(dialog())).toContain('Отсрочка: $137,50');
     await type(cashInput(), '');
     await click(dialogButton('Saqlash'));
     expect(publish.mock.calls[1]?.[0].upserts[0]?.deferredPrice).toBeNull();
-    expect(text(rowFor('10491').querySelectorAll('td')[4])).toBe('—');
+    expect(rowFor('10491').querySelector('[data-deferred]')).toBeNull();
   });
 
   it('shows and edits the Alif factoring prices [C, owner 2026-11-12]; none = not offered', async () => {
@@ -583,21 +609,20 @@ describe('Narxlar: changing one price publishes at once', () => {
       return found;
     };
     // The fake gives 10491 an Alif price; 10483 has none and says it is not offered.
-    expect(text(rowFor('10491').querySelectorAll('td')[7])).toBe('$140,28');
-    expect(text(rowFor('10483').querySelectorAll('td')[7])).toBe("ko'rinmaydi");
+    expect(text(rowFor('10491').querySelector('[data-alif-price]'))).toBe('$140,28');
+    expect(rowFor('10483').querySelector('[data-not-offered-alif]')).not.toBeNull();
     await openRow('10491');
-    expect(text(dialog())).toContain('Alif: $140,28');
     expect(input('data-alif-price-input').value).toBe('140,28');
     // A deferred Alif price without the sale price is refused before any request.
     await type(input('data-alif-price-input'), '');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(input('data-alif-deferred-price-input'), '');
     await click(dialogButton('Saqlash'));
     expect(publish.mock.calls[0]?.[0].upserts[0]).toMatchObject({
       alifPrice: null,
       alifDeferredPrice: null,
     });
-    expect(text(rowFor('10491').querySelectorAll('td')[7])).toBe("ko'rinmaydi");
+    expect(rowFor('10491').querySelector('[data-not-offered-alif]')).not.toBeNull();
   });
 
   it('saves an optional recommended price (RRP), keeps it when the price changes and clears it again', async () => {
@@ -609,11 +634,11 @@ describe('Narxlar: changing one price publishes at once', () => {
       return input;
     };
     await openRow('10491');
-    expect(text(dialog())).toContain('Tavsiya etilgan narx (RRP)');
+    expect(text(dialog())).toContain('RRP');
     expect(rrpInput().value).toBe('');
     expect(dialog()?.querySelector('[data-current-rrp]')).toBeNull();
     await type(rrpInput(), '15x');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(rrpInput(), '159.9');
     await click(dialogButton('Saqlash'));
     expect(publish.mock.calls[0]?.[0].upserts).toEqual([
@@ -632,8 +657,7 @@ describe('Narxlar: changing one price publishes at once', () => {
     // The dialog shows the saved RRP; with nothing changed there is nothing to save.
     await openRow('10491');
     expect(rrpInput().value).toBe('159,9');
-    expect(text(dialog()?.querySelector('[data-current-rrp]'))).toBe('RRP: $159,90');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     // A save replaces the whole item, so changing only the price sends the RRP along.
     await type(priceInput(), '140');
     await click(dialogButton('Saqlash'));
@@ -654,10 +678,10 @@ describe('Narxlar: changing one price publishes at once', () => {
     await openRow('10491');
     await type(priceInput(), '12.345');
     expect(text(dialog())).toContain("Narx noto'g'ri");
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(priceInput(), '100');
     expect(text(dialog())).toContain('Narx oxirgi tannarxdan past');
-    expect(dialogButton('Saqlash').disabled).toBe(false);
+    expect(closed(dialogButton('Saqlash'))).toBe(false);
     expect(publish).not.toHaveBeenCalled();
   });
 
@@ -693,54 +717,76 @@ describe('Narxlar: changing one price publishes at once', () => {
     await type(priceInput(), '215000');
     await click(dialogButton('Saqlash'));
     expect(dialog()).not.toBeNull();
-    expect(text(dialog()?.querySelector('.notice--error'))).not.toBe('');
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v15");
+    expect(text(dialog()?.querySelector('.note--bad'))).not.toBe('');
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v15 ');
     await click(dialogButton('Saqlash'));
     expect(dialog()).toBeNull();
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v16");
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v16 ');
+  });
+
+  it("keeps a colleague's change of the same product after a refused save (the fields merge)", async () => {
+    const { services } = await mountPrices('manager');
+    await openRow('10483');
+    // A colleague sets this product's RRP while the dialog is open.
+    const current = await services.pricingApi.getCurrent();
+    const same = current.items.find((i) => i.productCode === '10483');
+    if (!same) throw new Error('no 10483');
+    await services.pricingApi.publishChanges({
+      baseVersionNumber: 14,
+      upserts: [
+        {
+          productId: same.productId,
+          basePrice: same.basePrice,
+          deferredPrice: same.deferredPrice,
+          rrp: '777',
+          wholesalePrice: same.wholesalePrice,
+          wholesaleDeferredPrice: same.wholesaleDeferredPrice,
+          alifPrice: same.alifPrice,
+          alifDeferredPrice: same.alifDeferredPrice,
+        },
+      ],
+      removedProductIds: [],
+    });
+    await type(priceInput(), '215000');
+    await click(dialogButton('Saqlash'));
+    expect(dialog()).not.toBeNull();
+    // the untouched RRP field took the colleague's value; the typed price stayed
+    const rrp = body().querySelector<HTMLInputElement>('[data-rrp-input] input');
+    expect(rrp?.value).toBe('777');
+    expect(priceInput().value).toBe('215000');
+    const publish = vi.spyOn(services.pricingApi, 'publishChanges');
+    await click(dialogButton('Saqlash'));
+    expect(dialog()).toBeNull();
+    expect(publish.mock.calls[0]?.[0].upserts[0]).toMatchObject({
+      basePrice: '215000',
+      rrp: '777',
+    });
   });
 });
 
-describe('Narxlar: the history tab', () => {
-  it('lists the products and shows the chosen one with its price and supply history', async () => {
-    await mountPrices('manager', { path: '/prices?tab=history' });
-    const items = Array.from(body().querySelectorAll<HTMLButtonElement>('.hrow'));
-    expect(items).toHaveLength(17);
-    const target = items.find((b) => b.textContent?.includes('10491'));
-    if (!target) throw new Error('no 10491');
-    await click(target);
-    expect(target.getAttribute('aria-pressed')).toBe('true');
-    const panel = body().querySelector('.history__panel');
-    expect(text(panel)).toContain('10491');
-    expect(text(panel)).toContain('Postavka tarixi');
-    expect(text(panel)).toContain('keyingi buyurtmalarga');
-  });
-
-  it("opens from the dialog's history button on the same product", async () => {
-    const { router } = await mountPrices('manager');
-    await openRow('10491');
-    await click(dialogButton('Narxlar tarixi'));
-    expect(router.currentRoute.value.query.tab).toBe('history');
-    expect(text(body().querySelector('.history__panel'))).toContain('10491');
-  });
-
+describe('Narxlar: the history side panel', () => {
   it('opens a product from the ?history= link of the search and drops the parameter', async () => {
     const probe = createTestServices({ identityId: 'manager' });
     const list = await probe.services.pricingApi.getCurrent();
     const item = list.items.find((i) => i.productCode === '10491');
     const { router } = await mountPrices('manager', { path: `/prices?history=${item?.productId}` });
-    expect(router.currentRoute.value.query).toEqual({ tab: 'history' });
-    expect(text(body().querySelector('.history__panel'))).toContain('10491');
+    expect(router.currentRoute.value.query).toEqual({});
+    expect(text(panel()?.querySelector('.product__code'))).toBe('10491');
+  });
+
+  it('drops an older ?tab=history link and shows the list', async () => {
+    const { router } = await mountPrices('manager', { path: '/prices?tab=history' });
+    expect(router.currentRoute.value.query).toEqual({});
+    expect(rows()).toHaveLength(17);
   });
 
   it('gives the accountant the supply history, no price history and no edit button', async () => {
     await mountPrices('accountant');
     await openRow('10491');
     expect(dialog()).toBeNull();
-    const panel = body().querySelector('.history__panel');
-    expect(text(panel)).toContain('Postavka tarixi');
-    expect(text(panel)).not.toContain("Narxni o'zgartirish");
-    expect(text(panel)).not.toContain("Narx o'zgarishlari");
+    expect(text(panel())).toContain('Postavka tarixi');
+    expect(text(panel())).not.toContain("Narxni o'zgartirish");
+    expect(text(panel())).not.toContain("Narx o'zgarishlari");
   });
 });
 
@@ -758,38 +804,39 @@ describe('Narxlar: the «Оптовик/Партнер» tier [C, owner 2026-11-
     return input;
   };
 
-  it('shows the wholesale price where there is one, "standartdan" where there is none', async () => {
+  it('shows the wholesale price where there is one, "standart narx" where there is none', async () => {
     await mountPrices('manager');
     expect(text(rowFor('10482').querySelector('[data-wholesale-price]'))).toMatch(/^\$\d+,\d\d$/);
     expect(rowFor('10482').querySelector('[data-from-standard]')).toBeNull();
-    expect(text(rowFor('10483').querySelector('[data-from-standard]'))).toBe('standartdan');
+    expect(text(rowFor('10483').querySelector('[data-from-standard]'))).toBe('standart narx');
   });
 
-  it('lists the products without a wholesale price in their own tab', async () => {
+  it('lists the products without a wholesale price in their own ready view', async () => {
     const { router } = await mountPrices('manager');
-    const tab = Array.from(body().querySelectorAll<HTMLElement>('[role="tab"]')).find((t) =>
-      text(t).startsWith("Ulgurji narxi yo'q"),
-    );
-    if (!tab) throw new Error('no wholesale tab');
-    await click(tab);
-    expect(router.currentRoute.value.query.tab).toBe('nowholesale');
+    await click(view('noWholesale'));
+    expect(router.currentRoute.value.query.preset).toBe('noWholesale');
     expect(codes()).toContain('10483');
     expect(codes()).not.toContain('10482');
+    expect(text(body().querySelector('[data-testid="list-footer"]'))).toBe('9 ta tovar');
+  });
+
+  it('keeps an older ?tab=nowholesale link on the same list', async () => {
+    const { router } = await mountPrices('manager', { path: '/prices?tab=nowholesale' });
+    expect(router.currentRoute.value.query).toEqual({ preset: 'noWholesale' });
+    expect(codes()).toHaveLength(9);
   });
 
   it('sets, checks and clears the wholesale prices in the same one publish', async () => {
     const { services } = await mountPrices('manager');
     const publish = vi.spyOn(services.pricingApi, 'publishChanges');
     await openRow('10483');
-    expect(dialog()?.querySelector('[data-section="standard"]')).not.toBeNull();
-    expect(text(dialog()?.querySelector('[data-section="wholesale"]'))).toContain(
-      'Ulgurji / Hamkor',
-    );
+    expect(text(dialog())).toContain('Standart');
+    expect(text(dialog())).toContain('Ulgurji / Hamkor');
     expect(wholesaleInput().value).toBe('');
     // A deferred wholesale price needs the wholesale sale price.
     await type(wholesaleDeferredInput(), '10');
-    expect(text(dialog())).toContain('Avval shu turning Цена sini kiriting');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(text(dialog())).toContain("Keyin to'lash narxi uchun avval ulgurji narxni kiriting");
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(wholesaleInput(), '9,5');
     await click(dialogButton('Saqlash'));
     expect(publish).toHaveBeenCalledTimes(1);
@@ -800,8 +847,8 @@ describe('Narxlar: the «Оптовик/Партнер» tier [C, owner 2026-11-
     expect(text(rowFor('10483').querySelector('[data-wholesale-price]'))).toBe('$9,50');
 
     await openRow('10483');
-    expect(text(dialog()?.querySelector('[data-current-wholesale]'))).toBe('Ulgurji: $9,50');
-    expect(dialogButton('Saqlash').disabled).toBe(true);
+    expect(wholesaleInput().value).toBe('9,5');
+    expect(closed(dialogButton('Saqlash'))).toBe(true);
     await type(wholesaleDeferredInput(), '');
     await type(wholesaleInput(), '');
     await click(dialogButton('Saqlash'));
@@ -809,7 +856,7 @@ describe('Narxlar: the «Оптовик/Партнер» tier [C, owner 2026-11-
       wholesalePrice: null,
       wholesaleDeferredPrice: null,
     });
-    expect(text(rowFor('10483').querySelector('[data-from-standard]'))).toBe('standartdan');
+    expect(text(rowFor('10483').querySelector('[data-from-standard]'))).toBe('standart narx');
   });
 });
 
@@ -883,10 +930,10 @@ describe('Narxlar: the row context menu [owner 2026-11-12]', () => {
     const { router } = await mountPrices('manager');
     await choose('10491', "Narxni o'zgartirish");
     expect(text(dialog())).toContain('10491');
-    await click(dialogButton('Bekor qilish'));
+    await click(dialogButton('Bekor'));
     await choose('10491', 'Narxlar tarixi');
-    expect(router.currentRoute.value.query.tab).toBe('history');
-    expect(text(body().querySelector('.history__panel'))).toContain('10491');
+    expect(router.currentRoute.value.name).toBeUndefined();
+    expect(text(panel()?.querySelector('.product__code'))).toBe('10491');
   });
 
   it('opens Ostatok searched by the product code', async () => {
@@ -955,10 +1002,10 @@ describe('Narxlar: the row context menu [owner 2026-11-12]', () => {
     await click(dialogButton('Olib tashlash'));
     expect(dialog()).not.toBeNull();
     expect(text(dialog()?.querySelector('[role="alert"]'))).not.toBe('');
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v15");
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v15 ');
     await click(dialogButton('Olib tashlash'));
     expect(dialog()).toBeNull();
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v16");
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v16 ');
     expect(rows().some((r) => r.textContent?.includes('10483'))).toBe(false);
   });
 
@@ -979,7 +1026,7 @@ describe('Narxlar: the row context menu [owner 2026-11-12]', () => {
     expect(publish).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
     expect(useToast().toast.value?.message).toMatch(/allaqachon price listdan olib tashlangan$/);
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v15");
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v15 ');
     expect(rows().some((r) => r.textContent?.includes('10483'))).toBe(false);
   });
 
@@ -992,7 +1039,7 @@ describe('Narxlar: the row context menu [owner 2026-11-12]', () => {
     confirm.click();
     await flushPromises();
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(text(body().querySelector('.head__subtitle'))).toContain("Narx ro'yxati v15");
+    expect(text(body().querySelector('[data-testid="list-version"]'))).toContain('v15 ');
   });
 
   it.each(['accountant', 'purchasing'])(
@@ -1019,22 +1066,108 @@ describe('Narxlar: the row context menu [owner 2026-11-12]', () => {
   );
 });
 
-describe('Narxlar: the supplier filter (owner request 2026-11-13)', () => {
-  it('narrows the list to the products with a line of that supplier, kept in the address', async () => {
+describe('Narxlar: brand, price type, sort and cards (design approved 2026-11-19)', () => {
+  const brandTrigger = (): HTMLButtonElement => {
+    const el = body().querySelector<HTMLButtonElement>('[data-testid="brand-filter"] button');
+    if (!el) throw new Error('no brand filter');
+    return el;
+  };
+
+  it('filters by the brand of the price list rule and finds a brand by search, kept in the address', async () => {
     const { router } = await mountPrices('manager');
-    const options = Array.from(body().querySelectorAll('.fcb__list [role="option"]')).map((o) =>
-      text(o),
+    await click(brandTrigger());
+    const options = Array.from(body().querySelectorAll('[role="option"]')).map((o) => text(o));
+    expect(options[0]).toBe('Hammasi');
+    expect(options.some((o) => o.startsWith('Samsung'))).toBe(true);
+    await router.replace('/prices?brand=Samsung');
+    await flushPromises();
+    const samsung = codes();
+    expect(samsung).toContain('10491');
+    expect(samsung.length).toBeLessThan(17);
+    expect(text(body().querySelector('[data-chip="brand"]'))).toContain('Brend: Samsung');
+    // Search finds the brand too; "Tozalash" clears it all.
+    await router.replace('/prices?q=samsung');
+    await flushPromises();
+    expect(codes().sort()).toEqual([...samsung].sort());
+    await click(button('Tozalash'));
+    expect(rows()).toHaveLength(17);
+    expect(body().querySelector('[data-chip]')).toBeNull();
+    // The search reaches the address after its 300 ms pause.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await flushPromises();
+    expect(router.currentRoute.value.query).toEqual({});
+  });
+
+  it('keeps only the products of one price type', async () => {
+    const { router } = await mountPrices('manager');
+    await router.replace('/prices?type=hasAlif');
+    await flushPromises();
+    for (const code of codes()) {
+      expect(rowFor(code).querySelector('[data-alif-price]')).not.toBeNull();
+    }
+    await router.replace('/prices?type=standardOnly');
+    await flushPromises();
+    for (const code of codes()) {
+      expect(rowFor(code).querySelector('[data-alif-price]')).toBeNull();
+      expect(rowFor(code).querySelector('[data-from-standard]')).not.toBeNull();
+    }
+    expect(text(body().querySelector('[data-chip="type"]'))).toContain('Faqat standart');
+  });
+
+  it('sorts by name and by price, kept in the address', async () => {
+    const { router } = await mountPrices('manager', { path: '/prices?sort=price' });
+    const prices = rows().map((r) =>
+      Number(
+        text(r.querySelector('[data-sale]')).replace('$', '').replace(/\s/g, '').replace(',', '.'),
+      ),
     );
-    expect(options[0]).toBe('Barcha postavshiklar');
-    expect(options.some((o) => o.startsWith('Beta system tm fbs'))).toBe(true);
-    const all = codes().length;
-    await router.replace('/prices?supplier=Beta%20system%20tm%20fbs');
+    expect(prices).toEqual([...prices].sort((a, b) => b - a));
+    await router.replace('/prices?sort=name');
     await flushPromises();
-    const narrowed = codes().length;
-    expect(narrowed).toBeGreaterThan(0);
-    expect(narrowed).toBeLessThan(all);
-    await router.replace('/prices?supplier=Nobody');
+    const names = rows().map((r) => text(r.querySelector('.pt__name')));
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, 'ru')));
+  });
+
+  it('shows the C3·a cards on request, with the same actions', async () => {
+    const { router } = await mountPrices('manager');
+    await click(body().querySelector<HTMLElement>('[data-layout="cards"]') as HTMLElement);
+    expect(router.currentRoute.value.query.layout).toBe('cards');
+    expect(body().querySelector('table')).toBeNull();
+    const card = body().querySelector<HTMLElement>('.pc[data-product="10491"]');
+    expect(text(card?.querySelector('.pc__sale'))).toBe('$133,60');
+    await click(card?.querySelector<HTMLElement>('[data-action="edit"]') as HTMLElement);
+    expect(text(dialog())).toContain("Narxni o'zgartirish");
+  });
+
+  it('opens the row menu on a right click of a card', async () => {
+    await mountPrices('manager');
+    await click(body().querySelector<HTMLElement>('[data-layout="cards"]') as HTMLElement);
+    const card = body().querySelector<HTMLElement>('.pc[data-product="10491"]');
+    expect(card?.querySelector('[data-action="history"]')).toBeNull();
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 80,
+    });
+    card?.querySelector('.pc__name')?.dispatchEvent(event);
     await flushPromises();
-    expect(codes()).toEqual([]);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
+  it('pages the list: 10 per page, the range and the next page', async () => {
+    await mountPrices('manager');
+    const size = body().querySelector<HTMLElement>('[data-testid="page-size"] button');
+    if (!size) throw new Error('no page size');
+    await click(size);
+    const ten = Array.from(body().querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (o) => text(o) === '10 ta',
+    );
+    await click(ten as HTMLElement);
+    expect(rows()).toHaveLength(10);
+    expect(text(body().querySelector('[data-testid="page-range"]'))).toBe('1–10 / 17');
+    await click(button('Keyingi sahifa'));
+    expect(rows()).toHaveLength(7);
   });
 });

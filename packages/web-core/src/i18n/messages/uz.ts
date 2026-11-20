@@ -109,6 +109,7 @@ export const coreUz = {
     orderingOrganizationInactive: 'Bu tashkilot buyurtma bera olmaydi.',
     staffOrderingDisabled: 'Kompaniya xodimlari bu yerda buyurtma bera olmaydi.',
     contactRequired: 'Avval ismingiz va telefon raqamingizni kiriting.',
+    placerNotMember: "Bu odam endi tashkilot a'zosi emas. Mijozni qaytadan tanlang.",
     lastAdmin: 'Tizimda kamida bitta faol administrator qolishi kerak.',
     telegramIdRequired: "Telegram ID si yo'q odam xodim rolida qolishi kerak.",
     organizationNotLinked:

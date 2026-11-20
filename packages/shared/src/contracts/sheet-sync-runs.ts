@@ -45,6 +45,8 @@ export const sheetSyncRunCountsSchema = z.strictObject({
   removalsRequested: count,
   removalsDismissed: count,
   reappearedAfterRemoval: count,
+  /** Rows stored with "cost pending" because their cost cells were only partly filled; absent on runs before 2026-11-18. */
+  incompleteCosts: count.optional(),
 });
 export type SheetSyncRunCounts = z.infer<typeof sheetSyncRunCountsSchema>;
 
@@ -59,7 +61,9 @@ export type SheetSyncRejectedRow = z.infer<typeof sheetSyncRejectedRowSchema>;
 
 export const sheetSyncSkippedSupplierSchema = z.strictObject({
   supplier: z.string(),
-  reason: z.enum(['SUPPLIER_NOT_SELECTED', 'BEFORE_DATE_LIMIT']),
+  // PRODUCT_NOT_SELECTED since 2026-11-17 (rows chosen by «Товар_ID»); the other two stay for the
+  // runs stored before it.
+  reason: z.enum(['PRODUCT_NOT_SELECTED', 'SUPPLIER_NOT_SELECTED', 'BEFORE_DATE_LIMIT']),
   count,
   hasInvisibleCharacters: z.boolean(),
 });

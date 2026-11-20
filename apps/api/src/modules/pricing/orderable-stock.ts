@@ -24,6 +24,20 @@ export function orderablePieces(free: Prisma.Decimal): Prisma.Decimal {
 }
 
 /**
+ * Whether a product is left out of the customer price list and the price list Excel file
+ * [C, owner 2026-11-19]: it is linked to the sheet (not staff-added) and the sheet's own available
+ * quantity, added up over its live delivery lines (`stock_cache`), is zero. The SHEET figure, not
+ * the free one: stock held by approved orders keeps the product listed, as out of stock. A product
+ * without a stock aggregate (unknown stock) stays listed. A negative sheet sum counts as zero.
+ */
+export function isSoldOutInSheet(
+  product: { codeGenerated: boolean },
+  sheetQuantity: Prisma.Decimal | undefined,
+): boolean {
+  return !product.codeGenerated && sheetQuantity !== undefined && sheetQuantity.lte(0);
+}
+
+/**
  * The figure as the JSON integer of the contracts; null = none. DECIMAL(18,3) stock stays far inside
  * the safe integer range, the clamp only keeps a corrupt value from becoming a wrong number.
  */

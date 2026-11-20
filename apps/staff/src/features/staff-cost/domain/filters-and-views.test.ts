@@ -18,7 +18,6 @@ import {
   parseRateInput,
   rateToInput,
 } from './rate-input';
-import { makeInvisibleVisible } from './visible-text';
 
 const LABELS = { all: 'Hammasi', none: 'Kategoriyasiz' };
 
@@ -231,17 +230,5 @@ describe('USD rate plausibility', () => {
     expect(assessRate('15812.5001', '12650.0000')).toBe('bigChange');
     expect(assessRate('9487.5', '12650.0000')).toBe('ok'); // exactly -25%
     expect(assessRate('9487.4999', '12650.0000')).toBe('bigChange');
-  });
-});
-
-describe('invisible characters in supplier names', () => {
-  it('turns hidden characters into visible markers and leaves normal text alone', () => {
-    const zeroWidth = String.fromCodePoint(0x200b);
-    const noBreak = String.fromCodePoint(0xa0);
-    expect(makeInvisibleVisible(`alpha trade import${zeroWidth}`)).toBe(
-      'alpha trade import<U+200B>',
-    );
-    expect(makeInvisibleVisible(`eco${noBreak}xiaomi`)).toBe('eco<U+00A0>xiaomi');
-    expect(makeInvisibleVisible('alpha trade import')).toBe('alpha trade import');
   });
 });

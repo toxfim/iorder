@@ -241,6 +241,7 @@ const emptyReport = (): SyncReport => ({
   staleRefs: [],
   mismatches: [],
   derivedUsdCosts: [],
+  incompleteCosts: [],
   stock: { created: 0, updated: 0, unchanged: 0 },
   categoriesChanged: 0,
   removals: { requested: 0, dismissed: 0 },

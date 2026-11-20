@@ -30,6 +30,7 @@ afterEach(() => {
 async function mountPrices(
   identity: string,
   prepare?: (services: Services) => void | Promise<void>,
+  path = '/prices',
 ) {
   const test = createTestServices({ identityId: identity });
   await test.services.currentUser.ensureLoaded();
@@ -44,7 +45,7 @@ async function mountPrices(
       { path: '/newer-models', name: 'staff-newer-models', component: { render: () => h('p') } },
     ],
   });
-  await router.push('/prices');
+  await router.push(path);
   const wrapper = mount(defineComponent({ render: () => h(RouterView) }), {
     attachTo: document.body,
     global: { plugins: [router], provide: { [servicesKey as symbol]: test.services } },
@@ -77,16 +78,23 @@ const allByTestId = (id: string): HTMLElement[] =>
   Array.from(body().querySelectorAll<HTMLElement>(`[data-testid="${id}"]`));
 const dialog = (): HTMLElement | null =>
   body().querySelector('[data-testid="modal"]:not(.modal--closing) [role="dialog"]');
-const rows = (): HTMLElement[] =>
-  Array.from(body().querySelectorAll<HTMLElement>('.surface tbody tr'));
+const rows = (): HTMLElement[] => Array.from(body().querySelectorAll<HTMLElement>('tbody tr'));
 const rowFor = (code: string): HTMLElement => {
   const found = rows().find((r) => r.textContent?.includes(code));
   if (!found) throw new Error(`No row ${code}`);
   return found;
 };
-const subtitle = (): string => text(body().querySelector('.head__subtitle'));
+// The published version under the title («v15 · e'lon qilingan»).
+const subtitle = (): string => text(body().querySelector('[data-testid="list-version"]'));
 const toastText = (): string => useToast().toast.value?.message ?? '';
-const tabs = (): HTMLElement[] => Array.from(body().querySelectorAll<HTMLElement>('[role="tab"]'));
+// The ready views («Tayyor ko'rinishlar»): name and count.
+const views = (): HTMLElement[] =>
+  Array.from(body().querySelectorAll<HTMLElement>('[data-preset]'));
+const view = (key: string): HTMLElement => {
+  const found = body().querySelector<HTMLElement>(`[data-preset="${key}"]`);
+  if (!found) throw new Error(`No view ${key}`);
+  return found;
+};
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 async function click(el: HTMLElement): Promise<void> {
   el.click();
@@ -102,12 +110,20 @@ const fieldIn = (dialogEl: HTMLElement | null, marker: string): HTMLInputElement
   if (!input) throw new Error(`No ${marker} input in the dialog`);
   return input;
 };
+/** The row's "Tahrirlash": the price dialog. */
 async function openRow(code: string): Promise<void> {
-  const trigger = rowFor(code).querySelector<HTMLElement>('.dt__link') ?? rowFor(code);
+  const trigger = rowFor(code).querySelector<HTMLElement>('[data-action="edit"]');
+  if (!trigger) throw new Error(`No edit button on ${code}`);
   await click(trigger);
 }
 /** The "+ Yangi tovar" menu, then one of its two items. */
+/** "Yangi tovar" sits in the header's "⋯" menu (design 2026-11-19): open that first. */
+async function openHeadMenu(): Promise<void> {
+  const more = byTestId('head-more');
+  if (more.getAttribute('aria-expanded') !== 'true') await click(more);
+}
 async function openMenuItem(item: 'add-manual-product' | 'import-prices'): Promise<void> {
+  await openHeadMenu();
   await click(byTestId('new-product-menu'));
   await click(byTestId(item));
 }
@@ -147,6 +163,7 @@ async function addManualProduct(
 describe("Narxlar: the '+ Yangi tovar' menu", () => {
   it('opens the add form and the Excel import from its two items, and closes on Escape', async () => {
     await mountPrices('manager');
+    await openHeadMenu();
     const trigger = byTestId('new-product-menu');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     await click(trigger);
@@ -208,48 +225,51 @@ describe("Narxlar: 'Yangi tovar qo'shish'", () => {
     expect(dialog()).toBeNull();
     expect(toastText()).toMatch(/^Demo powerbank qo'shildi · kod IO-000001 · v15/);
     // 17 again: the fake's one inactive product leaves the list as the new one enters.
-    expect(subtitle()).toBe("Narx ro'yxati v15 · 17 ta tovar · 1 tasi buyurtma orqali");
+    expect(subtitle()).toBe("v15 · e'lon qilingan");
+    expect(text(view('byOrder').querySelector('.view__count'))).toBe('1');
     const row = rowFor('IO-000001');
     expect(text(row.querySelector('[data-testid="manual-badge"]'))).toBe('Buyurtma orqali');
-    expect(spaced(row.querySelector('.meta'))).toBe('IO-000001 · Quloqchinlar');
     // No stock, cost or markup is ever shown for a product the sheet does not know.
-    expect(row.querySelector('.stock-cell')).toBeNull();
-    const cells = row.querySelectorAll('td');
-    // Stock, cost and markup (after the three price groups); no wholesale price yet.
-    expect([text(cells[1]), text(cells[2]), text(cells[9])]).toEqual(['—', '—', '—']);
-    // No Alif price: Alif factoring customers are not offered it.
-    expect(text(cells[7])).toBe("ko'rinmaydi");
-    expect(text(cells[5])).toBe('standartdan');
+    expect(spaced(row.querySelector('.pt__meta'))).toBe('IO-000001 Buyurtma orqali');
+    expect(row.querySelector('[data-markup]')).toBeNull();
+    // No wholesale price yet: that tier sees the standard one; no Alif price: not offered.
+    expect(text(row.querySelector('[data-from-standard]'))).toBe('standart narx');
+    expect(row.querySelector('[data-not-offered-alif]')).not.toBeNull();
   });
 
-  it("filters the list with the 'Buyurtma orqali' tab, kept in the address", async () => {
+  it("filters the list with the 'Buyurtma orqali' view, kept in the address", async () => {
     const { router } = await mountPrices('manager', (s) => addManualProduct(s, 'Demo', '5'));
-    expect(tabs().map(text)).toEqual([
-      'Barcha mahsulotlar17',
+    expect(views().map((v) => text(v.querySelector('.view__top')))).toEqual([
+      'Hammasi17',
       'Buyurtma orqali1',
       // The new product has none; the inactive one it replaced had none either.
-      "Ulgurji narxi yo'q9",
-      'Narxlar tarixi',
+      'Ulgurji narxsiz9',
+      'Tannarxdan past0',
     ]);
-    await click(tabs()[1] as HTMLElement);
-    expect(router.currentRoute.value.query.tab).toBe('manual');
+    await click(view('byOrder'));
+    expect(router.currentRoute.value.query.preset).toBe('byOrder');
     expect(rows().map((r) => text(r.querySelector('.code')))).toEqual(['IO-000001']);
-    expect(text(byTestId('list-footer'))).toBe(
-      '1 ta buyurtma orqali tovar · qoldiq va tannarx kuzatilmaydi · narxlar dollarda',
-    );
-    await click(tabs()[0] as HTMLElement);
+    expect(text(byTestId('list-footer'))).toBe('1 ta tovar');
+    await click(view('all'));
     expect(rows()).toHaveLength(17);
-    expect(text(byTestId('list-footer'))).toBe('17 ta tovar · narxlar dollarda');
+    expect(text(byTestId('list-footer'))).toBe('17 ta tovar');
   });
 
-  it('has no such tab and no manual count while every product comes from the sheet', async () => {
+  it('keeps an older ?tab=manual link on the same list', async () => {
+    const { router } = await mountPrices(
+      'manager',
+      (s) => addManualProduct(s, 'Demo', '5'),
+      '/prices?tab=manual',
+    );
+    expect(router.currentRoute.value.query).toEqual({ preset: 'byOrder' });
+    expect(rows().map((r) => text(r.querySelector('.code')))).toEqual(['IO-000001']);
+  });
+
+  it('counts no by-order product while every product comes from the sheet', async () => {
     await mountPrices('manager');
-    expect(tabs().map(text)).toEqual([
-      'Barcha mahsulotlar17',
-      "Ulgurji narxi yo'q9",
-      'Narxlar tarixi',
-    ]);
-    expect(subtitle()).toBe("Narx ro'yxati v14 · 17 ta tovar");
+    expect(text(view('byOrder').querySelector('.view__count'))).toBe('0');
+    expect(allByTestId('manual-badge')).toHaveLength(0);
+    expect(subtitle()).toBe("v14 · e'lon qilingan");
   });
 
   it('warns about a similar name and preselects the brand found in the name, until a brand is chosen', async () => {
@@ -305,10 +325,10 @@ describe("Narxlar: 'Yangi tovar qo'shish'", () => {
     await click(byTestId('manual-save'));
     expect(dialog()).not.toBeNull();
     expect(text(dialog()?.querySelector('.notice--error'))).toContain('boshqa xodim tomonidan');
-    expect(subtitle()).toContain("Narx ro'yxati v15");
+    expect(subtitle()).toContain('v15 ');
     await click(byTestId('manual-save'));
     expect(dialog()).toBeNull();
-    expect(subtitle()).toContain("Narx ro'yxati v16");
+    expect(subtitle()).toContain('v16 ');
   });
 });
 
@@ -420,7 +440,7 @@ describe("Narxlar: 'Excel orqali yuklash'", () => {
     expect(text(dialog())).toContain('v15');
     await click(byTestId('import-close'));
     expect(dialog()).toBeNull();
-    expect(subtitle()).toContain("Narx ro'yxati v15");
+    expect(subtitle()).toContain('v15 ');
     expect(rowFor('IO-000001')).toBeTruthy();
   });
 
@@ -544,7 +564,7 @@ describe("Narxlar: 'Sheet tovari bilan birlashtirish'", () => {
     expect(body().querySelector('[data-testid="merge-product"]')).toBeNull();
     await click(
       Array.from(dialog()?.querySelectorAll('button') ?? []).find(
-        (b) => text(b) === 'Bekor qilish',
+        (b) => text(b) === 'Bekor',
       ) as HTMLElement,
     );
 
@@ -592,7 +612,7 @@ describe("Narxlar: 'Sheet tovari bilan birlashtirish'", () => {
     expect(dialog()).toBeNull();
     expect(toastText()).toBe('IO-000001 → 10494 ga birlashtirildi · v16');
     expect(rows().some((r) => r.textContent?.includes('IO-000001'))).toBe(false);
-    expect(text(rowFor('10494').querySelectorAll('td')[3])).toBe('$150,00');
+    expect(text(rowFor('10494').querySelector('[data-sale]'))).toBe('$150,00');
   });
 
   it("opens pre-filled from the 'Sheetda bor' badge of a row whose name the sheet knows", async () => {

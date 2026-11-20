@@ -8,7 +8,12 @@ import AppModal from '@core/components/ui/AppModal.vue';
 import GuardedButton from '@/components/ui/GuardedButton.vue';
 import { useFormat } from '@core/i18n/use-format';
 import { fromMilli, toMilli } from '@core/lib/quantity';
-import { isFullDetail, type FullOrderDetail, type OrderSummary } from '../domain/order-model';
+import {
+  isFullDetail,
+  isFullSummary,
+  type FullOrderDetail,
+  type OrderSummary,
+} from '../domain/order-model';
 import type { AllocationPlan } from '../composables/use-allocation-plan';
 import { useBlockerText } from '../composables/use-blocker-text';
 import { approveBlockers } from '../domain/action-blockers';
@@ -38,7 +43,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { formatMoney, formatNumber } = useFormat();
+const { formatMoney, formatMoneyWithCurrency, formatNumber } = useFormat();
 const { ordersApi } = useServices();
 
 // The list holds no lines, so the dialog reads the order itself: what is approved is what the
@@ -63,6 +68,12 @@ async function loadDetail(id: string): Promise<void> {
     if (mine === run) loadState.value = 'error';
   }
 }
+
+// The order as just read wins over the list row it was opened from: its sum is the current one.
+const fullOrder = computed(() => {
+  if (detail.value && detail.value.id === props.order?.id) return detail.value;
+  return props.order && isFullSummary(props.order) ? props.order : null;
+});
 
 // A quick call to the person who placed the order, to settle a doubt before approving.
 const phone = computed(() => {
@@ -145,10 +156,24 @@ function confirm(): void {
 <template>
   <AppModal
     :model-value="modelValue"
-    :title="t('orders.approveDialog.title', { id: order?.orderNumber ?? '' })"
-    :description="order?.organizationName"
+    :title="t('orders.approveDialog.title')"
+    :description="t('orders.approveDialog.notice')"
     @update:model-value="onUpdate"
   >
+    <!-- The approved design's summary box: number, total, customer · who placed it, payment plan. -->
+    <div v-if="order" class="sum" data-testid="approve-summary">
+      <span class="sum__row">
+        <b class="sum__id mono">{{ order.orderNumber }}</b>
+        <b v-if="fullOrder" class="mono">{{ formatMoneyWithCurrency(fullOrder.totalAmount) }}</b>
+      </span>
+      <span class="sum__who">
+        {{ order.organizationName }}
+        <template v-if="fullOrder">· {{ fullOrder.placedBy.fullName }}</template>
+      </span>
+      <span v-if="fullOrder" class="sum__plan">{{
+        t(`orders.paymentPlan.${fullOrder.paymentPlan}`)
+      }}</span>
+    </div>
     <p v-if="loadState === 'loading'" class="status" role="status">{{ t('state.loading') }}</p>
     <p v-else-if="loadState === 'error'" class="status status--error" role="alert">
       {{ t('orders.approveDialog.loadError') }}
@@ -219,7 +244,7 @@ function confirm(): void {
         {{ t('orders.detail.actions.approveSkipBack') }}
       </AppButton>
       <AppButton v-else variant="secondary" size="lg" :disabled="busy" @click="onUpdate(false)">
-        {{ t('common.cancel') }}
+        {{ t('orders.approveDialog.back') }}
       </AppButton>
       <GuardedButton
         size="lg"
@@ -239,6 +264,41 @@ function confirm(): void {
   </AppModal>
 </template>
 <style scoped>
+/* The approved design's grey summary box above the choices. */
+.sum {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--page);
+}
+
+.sum__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.sum__id {
+  font-size: var(--fs-body);
+}
+
+.sum__who {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sum__plan {
+  font-size: var(--fs-body);
+  color: var(--t3);
+}
+
 .status {
   margin: 0;
   font-size: var(--fs-small);

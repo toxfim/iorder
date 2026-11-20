@@ -10,8 +10,11 @@ const props = withDefaults(
     title: string;
     description?: string;
     maxWidth?: string;
+    /** No panel padding: the title, body and footer run edge to edge between divider lines
+     *  (staff design T3). The content then pads itself. */
+    flush?: boolean;
   }>(),
-  { description: undefined, maxWidth: '440px' },
+  { description: undefined, maxWidth: '440px', flush: false },
 );
 
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -36,6 +39,7 @@ useDialogFocus({ active: open, container: panel, onEscape: close });
       <div
         ref="panel"
         class="modal__panel"
+        :class="{ 'modal__panel--flush': flush }"
         :style="{ maxWidth }"
         role="dialog"
         aria-modal="true"
@@ -43,8 +47,14 @@ useDialogFocus({ active: open, container: panel, onEscape: close });
         :aria-describedby="description ? descriptionId : undefined"
         tabindex="-1"
       >
-        <!-- The title slot adds a decoration (an icon) around the same text; `title` stays the name. -->
-        <h2 :id="titleId" class="modal__title">
+        <!-- The title slot adds a decoration (an icon) around the same text; `title` stays the name.
+             A richer header (a photo, a subtitle, a close button) uses the `header` slot instead
+             and puts the dialog's name on its own heading with the given `titleId`, so the name
+             stays the title text alone. -->
+        <div v-if="$slots.header" class="modal__title">
+          <slot name="header" :title-id="titleId" />
+        </div>
+        <h2 v-else :id="titleId" class="modal__title">
           <slot name="title">{{ title }}</slot>
         </h2>
         <p v-if="description" :id="descriptionId" class="modal__description">{{ description }}</p>
@@ -169,5 +179,29 @@ useDialogFocus({ active: open, container: panel, onEscape: close });
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 0;
+}
+
+/* A flush dialog: the panel has no padding and the three parts are divided by lines. */
+.modal__panel--flush,
+:root[data-staff-app] .modal__panel--flush {
+  gap: 0;
+  padding: 0;
+}
+
+.modal__panel--flush .modal__title {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ef);
+}
+
+.modal__panel--flush .modal__body,
+:root[data-staff-app] .modal__panel--flush .modal__body {
+  margin: 0;
+  padding: 0;
+}
+
+.modal__panel--flush .modal__footer {
+  margin-top: 0;
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--ef);
 }
 </style>

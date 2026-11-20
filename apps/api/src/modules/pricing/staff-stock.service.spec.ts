@@ -50,7 +50,10 @@ describe('StaffStockService.countUnpricedActive', () => {
         .fn()
         .mockResolvedValue({ published: new Set(publishedIds), draft: new Set(['d1']) }),
     } as unknown as PricingService;
-    return { service: new StaffStockService(catalog, pricing, {} as never, {} as never), count };
+    return {
+      service: new StaffStockService(catalog, pricing, {} as never, {} as never, {} as never),
+      count,
+    };
   }
 
   it('asks the catalog to count active products outside the published priced ids only', async () => {

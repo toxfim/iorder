@@ -14,6 +14,7 @@ import {
   type PriceListSource,
   type PriceListStatus,
   type PublishChangesRequest,
+  type StaffPriceChange,
 } from '@iorder/shared';
 import {
   PRICE_IMPORT_MAX_BYTES,
@@ -306,6 +307,7 @@ export function createFakePriceBackend(options: FakePriceBackendOptions = {}): {
     };
     for (const number of Object.values(FAKE_VERSION_NUMBERS)) {
       const prices = new Map<string, string>();
+      const deferredPrices = new Map<string, string>();
       const wholesalePrices = new Map<string, string>();
       const wholesaleDeferredPrices = new Map<string, string>();
       const alifPrices = new Map<string, string>();
@@ -321,6 +323,10 @@ export function createFakePriceBackend(options: FakePriceBackendOptions = {}): {
         if (number === FAKE_VERSION_NUMBERS.published && index % 2 === 0) {
           wholesalePrices.set(id, demoWholesale(usd, 92n));
           if (index % 4 === 0) wholesaleDeferredPrices.set(id, demoWholesale(usd, 97n));
+        }
+        // Every fourth product (from the fourth) has a standard pay-later price too.
+        if (number === FAKE_VERSION_NUMBERS.published && index % 4 === 3) {
+          deferredPrices.set(id, demoWholesale(usd, 104n));
         }
         // Every third product has an Alif price (the others are not offered to that tier).
         if (number === FAKE_VERSION_NUMBERS.published && index % 3 === 0) {
@@ -339,7 +345,7 @@ export function createFakePriceBackend(options: FakePriceBackendOptions = {}): {
         publishedBy: FAKE_PUBLISHED_AUTHOR,
         publishedByUserId: fakeUuid(`person:${FAKE_PUBLISHED_AUTHOR}`),
         prices,
-        deferredPrices: new Map(),
+        deferredPrices,
         rrps: new Map(),
         wholesalePrices,
         wholesaleDeferredPrices,
@@ -391,7 +397,58 @@ export function createFakePriceBackend(options: FakePriceBackendOptions = {}): {
     };
   }
 
+  // A demo stand-in for the api's brand rule (staff choice, else the brand finder), the same word
+  // list as the stock fake's.
+  const DEMO_BRANDS = ['Xiaomi', 'Samsung', 'Huawei', 'Apple', 'Baseus', 'Ugreen', 'JBL'];
+  function listBrandOf(product: StaffProductDetailResponse): string | null {
+    const chosen = brandName(brandOfProduct.get(product.id) ?? null);
+    if (chosen !== null) return chosen;
+    const words = product.translations.flatMap((t) => t.name.toLowerCase().split(/[\s,()/-]+/));
+    return (
+      knownBrands().find((b) => words.includes(b.name.toLowerCase()))?.name ??
+      DEMO_BRANDS.find((b) => words.includes(b.toLowerCase())) ??
+      null
+    );
+  }
+
+  /** The api's last price change: any price of any tier, or a (re)entry into the list. */
+  function lastChangeOf(productId: string): StaffPriceChange | null {
+    const ordered = versions
+      .filter((v) => v.status !== 'DRAFT' && v.publishedAt !== null)
+      .sort((a, b) => a.number - b.number);
+    const pricesOf = (v: VersionRecord): string | null =>
+      v.prices.has(productId)
+        ? [
+            v.prices,
+            v.deferredPrices,
+            v.rrps,
+            v.wholesalePrices,
+            v.wholesaleDeferredPrices,
+            v.alifPrices,
+            v.alifDeferredPrices,
+          ]
+            .map((m) => m.get(productId) ?? '-')
+            .join('|')
+        : null;
+    let previous: string | null = null;
+    let change: StaffPriceChange | null = null;
+    for (const version of ordered) {
+      const current = pricesOf(version);
+      if (current !== null && current !== previous) {
+        change = {
+          versionNumber: version.number,
+          changedAt: version.publishedAt ?? '',
+          changedBy: version.publishedBy,
+        };
+      }
+      previous = current;
+    }
+    return change;
+  }
+
   function toPriceList(record: VersionRecord): StaffPriceListWithRateResponse {
+    // Like the api: brand and last change are known on the current list only.
+    const isCurrent = record.status === 'PUBLISHED';
     const items = [...record.prices].flatMap(([productId, basePrice]) => {
       const product = products.get(productId);
       if (!product) return [];
@@ -416,6 +473,8 @@ export function createFakePriceBackend(options: FakePriceBackendOptions = {}): {
             basePrice: fakeUzs(basePrice),
             deferredPrice: optionalUzs(record.deferredPrices.get(productId) ?? null),
           },
+          brand: isCurrent ? listBrandOf(product) : null,
+          lastChange: isCurrent ? lastChangeOf(productId) : null,
           ...primaryImage(product.productCode),
         },
       ];

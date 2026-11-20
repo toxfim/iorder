@@ -218,6 +218,15 @@ export const staffVersionListResponseSchema = z.strictObject({
 });
 export type StaffVersionListResponse = z.infer<typeof staffVersionListResponseSchema>;
 
+/** When and by whom a product's prices last changed ("O'zgargan" in Narxlar). */
+export const staffPriceChangeSchema = z.strictObject({
+  versionNumber: z.number().int(),
+  changedAt: isoInstantSchema,
+  /** The publisher's display name, never an id; null when unknown. */
+  changedBy: z.string().nullable(),
+});
+export type StaffPriceChange = z.infer<typeof staffPriceChangeSchema>;
+
 /** Version detail / current staff list / result of an item upsert. */
 export const staffPriceListResponseSchema = z.strictObject({
   version: staffVersionResponseSchema,
@@ -260,6 +269,17 @@ export const staffPriceListResponseSchema = z.strictObject({
       uzs: z
         .strictObject({ basePrice: moneyStringSchema, deferredPrice: moneyStringSchema.nullable() })
         .nullable(),
+      /**
+       * The product's brand by the price list file's rule (the brand staff chose, else the brand
+       * finder on the name); null = none, and always null outside the current list. Narxlar
+       * filters by it (design approved 2026-11-19).
+       */
+      brand: z.string().nullable(),
+      /**
+       * The latest published version in which one of this product's prices (any tier, RRP, the
+       * currency) changed or the product entered the list [P]; null outside the current list.
+       */
+      lastChange: staffPriceChangeSchema.nullable(),
       ...productPrimaryImageShape,
     }),
   ),

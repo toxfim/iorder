@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { useRouter, type RouteLocationRaw } from 'vue-router';
 import { useTelegramBackButton } from '@core/telegram/use-back-button';
+import AppIcon from './AppIcon.vue';
 
 // The "← Mijozlar" link above detail pages (v1): plain text, 14px / 600 / #4D4D4D.
-const props = defineProps<{ to: RouteLocationRaw }>();
+// `round`: the approved staff order pages draw a soft accent circle with a chevron and a bigger
+// accent label instead of the small arrow link.
+const props = withDefaults(defineProps<{ to: RouteLocationRaw; variant?: 'text' | 'round' }>(), {
+  variant: 'text',
+});
 // `back`: the person used this way back (the link, or Telegram's own button), before the
 // navigation starts. A page that treats a return differently from other arrivals listens to it.
 const emit = defineEmits<{ back: [] }>();
@@ -18,8 +23,11 @@ useTelegramBackButton(() => {
 </script>
 
 <template>
-  <RouterLink :to="to" class="back" @click="emit('back')">
-    <span aria-hidden="true">{{ '←' }}</span>
+  <RouterLink :to="to" class="back" :class="`back--${variant}`" @click="emit('back')">
+    <span v-if="variant === 'round'" class="back__dot" aria-hidden="true">
+      <AppIcon name="chevron" :size="14" :stroke-width="1.8" />
+    </span>
+    <span v-else aria-hidden="true">{{ '←' }}</span>
     <slot />
   </RouterLink>
 </template>
@@ -56,5 +64,23 @@ useTelegramBackButton(() => {
   /* v8 brightens to the raw accent, which is under 4.5:1 for text; an underline marks it instead. */
   color: var(--acc-fg);
   text-decoration: underline;
+}
+:root[data-staff-app] .back--round,
+.back--round {
+  gap: 10px;
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+  color: var(--acc-fg);
+}
+
+.back__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--acc-bg);
+  transform: rotate(90deg);
 }
 </style>

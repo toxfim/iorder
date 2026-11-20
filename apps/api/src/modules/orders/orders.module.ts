@@ -21,6 +21,7 @@ import { CustomerGoodsRepository } from './customer-goods.repository.js';
 import { CustomerGoodsService } from './customer-goods.service.js';
 import { PickingController } from './picking.controller.js';
 import { PickingService } from './picking.service.js';
+import { StaffNewOrderService } from './staff-new-order.service.js';
 import { StaffOrderListService } from './staff-order-list.service.js';
 import { StaffOrdersController } from './staff-orders.controller.js';
 import {
@@ -56,6 +57,7 @@ import { OrganizationPaymentsService } from './organization-payments.service.js'
     OpenDemandService,
     OrderTimelineService,
     StaffOrderListService,
+    StaffNewOrderService,
     OrganizationPaymentsRepository,
     OrganizationPaymentsService,
   ],

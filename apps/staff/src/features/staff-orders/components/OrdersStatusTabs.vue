@@ -10,6 +10,11 @@ const props = defineProps<{
   counts: readonly StageTabCount[];
   /** The role's own step: placed right after "All" and marked. */
   ownStage: FulfillmentStage | null;
+  /**
+   * Draw only the first N pills, of equal width (the design's phone and tablet screens); the other
+   * statuses are in "Filtrlar → Holat".
+   */
+  limit?: number;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: StageFilter | 'all'] }>();
@@ -23,15 +28,25 @@ const tabs = computed(() => {
       : value === 'CLOSED'
         ? t('orders.filters.closed')
         : t(`orders.stages.${value}`);
-  const all = props.counts.map((c) => ({ ...c, label: label(c.value) }));
+  const all = props.counts.map((c) => ({
+    ...c,
+    label: label(c.value),
+    short: t(`orders.list.tabShort.${c.value}`),
+  }));
   const own = all.find((tab) => tab.value === props.ownStage);
   const rest = all.filter((tab) => tab.value !== 'all' && tab !== own);
-  return [all[0], ...(own ? [own] : []), ...rest].filter((tab) => tab !== undefined);
+  const ordered = [all[0], ...(own ? [own] : []), ...rest].filter((tab) => tab !== undefined);
+  return props.limit === undefined ? ordered : ordered.slice(0, props.limit);
 });
 </script>
 
 <template>
-  <div class="tabs" role="group" :aria-label="t('orders.filters.stage')">
+  <div
+    class="tabs"
+    :class="{ 'tabs--even': limit !== undefined }"
+    role="group"
+    :aria-label="t('orders.filters.stage')"
+  >
     <button
       v-for="tab in tabs"
       :key="tab.value"
@@ -41,7 +56,10 @@ const tabs = computed(() => {
       :aria-pressed="tab.value === modelValue"
       @click="emit('update:modelValue', tab.value)"
     >
-      {{ tab.label }}
+      <span class="tab__label" :title="limit !== undefined ? tab.label : undefined">{{
+        limit !== undefined ? tab.short : tab.label
+      }}</span
+      >{{ ' ' }}
       <span v-if="tab.value === ownStage" class="tab__own">{{ t('orders.filters.ownStep') }}</span>
       <span class="tab__count">{{ tab.count }}</span>
     </button>
@@ -49,13 +67,14 @@ const tabs = computed(() => {
 </template>
 
 <style scoped>
-/* v8 underline tabs on a hairline: one row that scrolls sideways on a phone instead of wrapping.
-   Pressed tab: orange label with a 2px bar and an orange count chip. */
+/* Approved «Buyurtmalar» design: rounded pills with the count in mono; the pressed one is ink.
+   One row that scrolls sideways when it does not fit (tablet, phone). */
 .tabs {
   display: flex;
-  gap: 24px;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
-  box-shadow: inset 0 -1px 0 var(--e8);
   scrollbar-width: none;
 }
 
@@ -67,58 +86,88 @@ const tabs = computed(() => {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  height: 42px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--t2);
-  font-size: var(--fs-small);
-  font-weight: 400;
+  gap: 8px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--e8);
+  border-radius: 999px;
+  background: var(--w);
+  color: var(--ink);
+  font-size: var(--fs-body-lg);
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .tab:hover {
-  color: var(--ink);
+  border-color: var(--d9);
+  background: var(--hov);
 }
 
 .tab:focus-visible {
   outline: 2px solid var(--acc);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 
 .tab--on,
 .tab--on:hover {
-  box-shadow: inset 0 -2px 0 var(--acc);
-  color: var(--acc-fg);
-  font-weight: 600;
+  border-color: var(--btn-ink-bg);
+  background: var(--btn-ink-bg);
+  color: var(--btn-ink-fg);
 }
 
+/* The role's own step comes right after "All"; the design draws no caption, so the note is
+   for screen readers only. */
 .tab__own {
-  font-size: var(--fs-group);
-  font-weight: 400;
-  color: var(--acc-fg);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .tab__count {
-  padding: 1px 6px;
-  border-radius: var(--r-kbd);
-  background: var(--ef);
-  font-size: var(--fs-group);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--t2);
+  color: var(--t3);
 }
 
 .tab--on .tab__count {
-  background: var(--acc-bg);
-  color: var(--acc-fg);
+  color: inherit;
+  font-weight: 400;
+}
+
+/* The phone's three pills: one row of truly equal columns. */
+.tabs--even {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tabs--even .tab {
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.tabs--even .tab__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (pointer: coarse), (hover: none) {
   .tab {
     min-height: 44px;
+  }
+}
+
+@media (max-width: 599px) {
+  .tab {
+    height: 40px;
+    padding: 0 16px;
   }
 }
 </style>

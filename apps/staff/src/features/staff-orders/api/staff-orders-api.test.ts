@@ -61,10 +61,14 @@ describe('createHttpStaffOrdersApi', () => {
       'https://api.test/staff/orders?statuses=REJECTED%2CCANCELLED&period=TODAY',
     );
     const counted = setup(200, counts);
-    const result = await counted.api.countOrders({ paymentStatus: 'UNPAID', search: 'alpha' });
+    const result = await counted.api.countOrders({
+      paymentStatus: 'UNPAID',
+      paymentPlan: 'DEFERRED',
+      search: 'alpha',
+    });
     expect(result.byStatus).toEqual(counts.byStatus);
     expect(call(counted.fetchImpl)[0]).toBe(
-      'https://api.test/staff/orders/counts?paymentStatus=UNPAID&search=alpha',
+      'https://api.test/staff/orders/counts?paymentStatus=UNPAID&paymentPlan=DEFERRED&search=alpha',
     );
   });
 

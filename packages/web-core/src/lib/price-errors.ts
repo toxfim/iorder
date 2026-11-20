@@ -62,6 +62,7 @@ export const CONFLICT_REASON_MESSAGES: Readonly<Record<ConflictReason, string>> 
   IDEMPOTENCY_KEY_REUSED: 'apiErrors.idempotencyKeyReused',
   ORDERING_ORGANIZATION_INACTIVE: 'apiErrors.orderingOrganizationInactive',
   CONTACT_REQUIRED: 'apiErrors.contactRequired',
+  PLACER_NOT_MEMBER: 'apiErrors.placerNotMember',
   LAST_ADMIN: 'apiErrors.lastAdmin',
   TELEGRAM_ID_REQUIRED: 'apiErrors.telegramIdRequired',
   ORGANIZATION_NOT_LINKED: 'apiErrors.organizationNotLinked',

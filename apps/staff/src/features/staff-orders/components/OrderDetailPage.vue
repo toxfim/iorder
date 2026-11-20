@@ -36,10 +36,8 @@ import type { DraftItem } from '../domain/item-draft';
 import {
   paymentTone,
   progressSegments,
-  stageTone,
   type ProgressSegmentState,
 } from '../domain/order-presentation';
-import DeliveryContactCard from './DeliveryContactCard.vue';
 import ItemsEditConfirmDialog from './ItemsEditConfirmDialog.vue';
 import ItemsUnsavedDialog from './ItemsUnsavedDialog.vue';
 import OrderActionsPanel from './OrderActionsPanel.vue';
@@ -48,6 +46,9 @@ import CashSaleWarning from './CashSaleWarning.vue';
 import OrderAllocationsTable from './OrderAllocationsTable.vue';
 import OrderItems from './OrderItems.vue';
 import { freeStockByItem } from '../domain/free-stock';
+import OrderClientCard from './OrderClientCard.vue';
+import OrderHeaderActions from './OrderHeaderActions.vue';
+import OrderStatusPill from './OrderStatusPill.vue';
 import OrderTimeline from './OrderTimeline.vue';
 import PickingPanel from './PickingPanel.vue';
 import PaymentMethodChoice from './PaymentMethodChoice.vue';
@@ -58,7 +59,7 @@ const route = useRoute();
 const { formatDateTime, formatMoneyWithCurrency } = useFormat();
 const { formatUsd, formatRate } = useCostFormat();
 const { clock, currentUser, ordersApi } = useServices();
-const { ageText } = useOrderAge(clock);
+const { agoText } = useOrderAge(clock);
 // The order page re-reads the order and its timeline after EVERY change and after a stale row version (409 ORDER_CHANGED), so the next click works on fresh data.
 const actions = useOrderActions({ onChanged: () => reload(), onStale: () => reload() });
 
@@ -82,13 +83,18 @@ const full = computed(() => {
   const value = order.value;
   return value && isFullDetail(value) ? value : null;
 });
-// How long the order has been moving through the pipeline; empty once it is finished or closed.
-const waiting = computed(() => (order.value ? ageText(summaryOf(order.value)) : ''));
+// How long ago the order was placed, also once it is finished (the design); the exact time is the
+// title of the element.
+const waiting = computed(() => (order.value ? agoText(summaryOf(order.value)) : ''));
 const stateForView = computed(() => (state.value === 'notFound' ? 'empty' : state.value));
 
 // --- what the viewer may do --------------------------------------------------------------------
 
 const permissions = computed(() => actions.permissions());
+// The manager's SUBMITTED step sits in the header (the approved design), not in the actions card.
+const headerActions = computed(
+  () => permissions.value.canDecide && order.value?.status === 'SUBMITTED' && full.value !== null,
+);
 const closed = computed(() => (order.value ? isClosedWithoutDelivery(order.value.status) : false));
 const editable = computed(
   () => permissions.value.canDecide && order.value?.status === 'SUBMITTED' && full.value !== null,
@@ -292,6 +298,7 @@ watch(orderId, () => {
 const planPendingTotal = computed(
   () => planOptions.value.find((option) => option.plan === planPending.value)?.total ?? '0',
 );
+const planLabel = (plan: PaymentPlan): string => t(`orders.paymentPlan.${plan}`);
 const confirmPlan = (): void => {
   const value = full.value;
   const plan = planPending.value;
@@ -301,8 +308,8 @@ const confirmPlan = (): void => {
 </script>
 
 <template>
-  <div class="page">
-    <AppBackLink :to="listLocation">{{ t('orders.page.title') }}</AppBackLink>
+  <div class="page" :class="{ 'page--bar': headerActions }">
+    <AppBackLink :to="listLocation" variant="round">{{ t('orders.view.back') }}</AppBackLink>
 
     <StateView
       :state="stateForView"
@@ -311,38 +318,31 @@ const confirmPlan = (): void => {
       @retry="detail.load()"
     >
       <template v-if="order">
+        <!-- Approved design: the number in mono, the status pill (read only: the status moves
+             only through the step buttons) and how long ago it was placed. -->
         <header class="head">
-          <div class="head__row">
+          <div class="head__main">
             <h1 class="head__title">
-              {{ t('orders.detail.title') }} <span class="head__id">{{ order.orderNumber }}</span>
+              <span class="sr-only">{{ t('orders.detail.title') }}</span>
+              <span class="head__id">{{ order.orderNumber }}</span>
             </h1>
-            <div class="head__badges">
-              <AppBadge :tone="stageTone(order.status)" dot>{{
-                t(`orders.stages.${order.status}`)
-              }}</AppBadge>
-              <AppBadge v-if="full" :tone="paymentTone(full.paymentStatus)" dot class="head__pay">
-                {{ t(`orders.payment.${full.paymentStatus}`) }}
-              </AppBadge>
-            </div>
-          </div>
-          <p class="head__meta">
-            <span class="head__org">{{ order.organizationName }}</span>
-            <template v-if="full">
-              ·
-              <i18n-t scope="global" keypath="orders.detail.metaPlaced">
-                <template #name>
-                  <PersonName :name="full.placedBy.fullName" :user-id="full.placedBy.userId" />
-                </template>
-              </i18n-t>
-            </template>
-            · <time :datetime="order.submittedAt">{{ formatDateTime(order.submittedAt) }}</time>
-            <template v-if="waiting">
-              ·
-              <span :title="t('table.sinceSubmitted')">{{
-                t('orders.detail.metaAge', { age: waiting })
-              }}</span></template
+            <span class="head__badges"><OrderStatusPill :status="order.status" /></span>
+            <time
+              class="head__age"
+              :datetime="order.submittedAt"
+              :title="formatDateTime(order.submittedAt)"
+              data-testid="order-age"
+              >{{ waiting || formatDateTime(order.submittedAt) }}</time
             >
-          </p>
+          </div>
+          <OrderHeaderActions
+            v-if="headerActions && full"
+            :order="full"
+            :draft-pending="itemDraft.dirty.value"
+            :page-busy="busy"
+            @changed="reload"
+            @stale="reload"
+          />
         </header>
 
         <div v-if="reasonBanner" class="closed" role="status">
@@ -350,7 +350,13 @@ const confirmPlan = (): void => {
           <p class="banner">{{ reasonBanner }}</p>
         </div>
 
-        <ol class="progress" :aria-label="t('orders.detail.progress')">
+        <!-- The approved design has no stepper; the manager's view leaves it out, the other roles
+             keep it (it tells them where the order waits). -->
+        <ol
+          v-if="!permissions.canDecide"
+          class="progress"
+          :aria-label="t('orders.detail.progress')"
+        >
           <li
             v-for="(segment, index) in segments"
             :key="index"
@@ -376,28 +382,6 @@ const confirmPlan = (): void => {
         </ol>
 
         <div class="layout">
-          <section class="panel panel--actions" :aria-label="t('orders.detail.sections.actions')">
-            <div class="panel__head">
-              <h2 class="panel__title">{{ t('orders.detail.sections.actions') }}</h2>
-              <span class="panel__aside">{{ roleLabel }}</span>
-            </div>
-            <OrderActionsPanel
-              :order="order"
-              :draft-pending="itemDraft.dirty.value"
-              :picking="codesShown ? picking : undefined"
-              @changed="reload"
-              @stale="reload"
-            />
-            <OrderAllocationPanel
-              v-if="holdsShown"
-              class="panel__holds"
-              :order-id="order.id"
-              :row-version="order.rowVersion"
-              :status="order.status"
-              @changed="reload"
-            />
-          </section>
-
           <div class="main">
             <CashSaleWarning
               v-if="permissions.canAccount && full?.paymentMethod === 'CASH'"
@@ -441,12 +425,111 @@ const confirmPlan = (): void => {
           </div>
 
           <aside class="side">
+            <OrderClientCard
+              :organization-name="order.organizationName"
+              :organization-type="order.organizationType"
+              :organization-label="order.detail === 'FULL' ? order.organizationLabel : null"
+              :contact="order.deliveryContact"
+            />
+
+            <section
+              v-if="!headerActions"
+              class="panel panel--actions"
+              :aria-label="t('orders.detail.sections.actions')"
+            >
+              <div class="panel__head">
+                <h2 class="panel__title">{{ t('orders.detail.sections.actions') }}</h2>
+                <span class="panel__aside">{{ roleLabel }}</span>
+              </div>
+              <OrderActionsPanel
+                :order="order"
+                :draft-pending="itemDraft.dirty.value"
+                :picking="codesShown ? picking : undefined"
+                @changed="reload"
+                @stale="reload"
+              />
+              <OrderAllocationPanel
+                v-if="holdsShown"
+                class="panel__holds"
+                :order-id="order.id"
+                :row-version="order.rowVersion"
+                :status="order.status"
+                @changed="reload"
+              />
+            </section>
+
+            <!-- To'lov turi (the customer's FULL / DEFERRED choice): the design's two radio cards.
+                 The manager changes it while SUBMITTED, after a confirmation; everyone else reads it. -->
+            <section
+              v-if="full"
+              class="panel plan"
+              :aria-label="t('orders.paymentPlan.title')"
+              data-testid="payment-plan-card"
+            >
+              <span class="lbl">{{ t('orders.paymentPlan.title') }}</span>
+              <div
+                class="plan__options"
+                role="radiogroup"
+                :aria-label="t('orders.paymentPlan.title')"
+              >
+                <template v-for="option in planOptions" :key="option.plan">
+                  <span
+                    v-if="option.plan === full.paymentPlan"
+                    class="opt opt--on"
+                    role="radio"
+                    aria-checked="true"
+                  >
+                    <span class="opt__dot" aria-hidden="true" />
+                    <span data-testid="payment-plan-value">{{ planLabel(option.plan) }}</span>
+                  </span>
+                  <button
+                    v-else-if="planEditable"
+                    type="button"
+                    class="opt"
+                    role="radio"
+                    aria-checked="false"
+                    :disabled="busy || !option.available || itemDraft.dirty.value"
+                    :aria-label="
+                      t('orders.paymentPlan.changeTo', {
+                        plan: planLabel(option.plan),
+                      })
+                    "
+                    :data-testid="'payment-plan-change-' + option.plan"
+                    @click="planPending = option.plan"
+                  >
+                    <span class="opt__dot" aria-hidden="true" />
+                    {{ planLabel(option.plan) }}
+                  </button>
+                  <span
+                    v-else
+                    class="opt opt--off"
+                    role="radio"
+                    aria-checked="false"
+                    aria-disabled="true"
+                  >
+                    <span class="opt__dot" aria-hidden="true" />
+                    {{ planLabel(option.plan) }}
+                  </span>
+                </template>
+              </div>
+              <p
+                v-if="
+                  planEditable &&
+                  full.paymentPlan === 'FULL' &&
+                  !planOptions.some((o) => o.plan === 'DEFERRED' && o.available)
+                "
+                class="plan__reason"
+                data-testid="payment-plan-reason"
+              >
+                {{ t('orders.paymentPlan.noDeferredPrice') }}
+              </p>
+            </section>
             <!-- Money: the server sends it to the manager, the accountant and the admin only. -->
             <section v-if="full" class="panel" :aria-label="t('orders.detail.paymentCard.title')">
               <h2 class="panel__title">{{ t('orders.detail.paymentCard.title') }}</h2>
               <div class="fact">
                 <span class="fact__label">{{ t('orders.detail.paymentCard.status') }}</span>
-                <AppBadge :tone="paymentTone(full.paymentStatus)" dot>
+                <AppBadge :tone="paymentTone(full.paymentStatus)" dot data-testid="payment-status">
                   {{ t(`orders.payment.${full.paymentStatus}`) }}
                 </AppBadge>
               </div>
@@ -480,50 +563,7 @@ const confirmPlan = (): void => {
                   }}</b>
                 </div>
               </div>
-              <div class="plan-box" data-testid="payment-plan-card">
-                <div class="fact">
-                  <span class="fact__label">{{ t('orders.paymentPlan.title') }}</span>
-                  <b class="fact__value" data-testid="payment-plan-value">{{
-                    t(`orders.paymentPlan.${full.paymentPlan}`)
-                  }}</b>
-                </div>
-                <div v-if="planEditable" class="plan-box__options">
-                  <AppButton
-                    v-for="option in planOptions"
-                    v-show="option.plan !== full.paymentPlan"
-                    :key="option.plan"
-                    size="sm"
-                    variant="ghost"
-                    :disabled="busy || !option.available || itemDraft.dirty.value"
-                    :data-testid="`payment-plan-change-${option.plan}`"
-                    @click="planPending = option.plan"
-                  >
-                    {{
-                      t('orders.paymentPlan.changeTo', {
-                        plan: t(`orders.paymentPlan.${option.plan}`),
-                      })
-                    }}
-                  </AppButton>
-                  <p
-                    v-if="
-                      full.paymentPlan === 'FULL' &&
-                      !planOptions.some((o) => o.plan === 'DEFERRED' && o.available)
-                    "
-                    class="plan-box__reason"
-                    data-testid="payment-plan-reason"
-                  >
-                    {{ t('orders.paymentPlan.noDeferredPrice') }}
-                  </p>
-                </div>
-              </div>
               <p class="panel__foot">{{ t('orders.detail.paymentCard.neverBlocks') }}</p>
-            </section>
-
-            <DeliveryContactCard v-if="order.deliveryContact" :contact="order.deliveryContact" />
-            <section v-else class="panel" :aria-label="t('orders.contact.title')">
-              <h2 class="panel__title">{{ t('orders.contact.title') }}</h2>
-              <b class="org">{{ order.organizationName }}</b>
-              <p class="muted">{{ t('orders.contact.hiddenForRole') }}</p>
             </section>
 
             <section
@@ -605,65 +645,139 @@ const confirmPlan = (): void => {
 </template>
 
 <style scoped>
+/* Approved design: content up to 1240px, 16px between the blocks. */
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-block);
+  gap: 16px;
+  max-width: 1240px;
+  min-width: 0;
   animation: viewIn 0.35s var(--ease) both;
 }
 
+/* Number, pill and age on the left; the manager's step on the right (the design). */
 .head {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: -14px;
-}
-
-.plan-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.plan-box__options {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.plan-box__reason {
-  margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--t3);
-}
-
-.head__row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  justify-content: space-between;
+  gap: 12px 16px;
 }
 
-/* v8 page title: 28px regular. */
+.head__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+}
+
+/* Below 1024px the step buttons are a sticky bar: the page keeps room for it at the end. */
+@media (max-width: 1023px) {
+  .page--bar {
+    padding-bottom: 96px;
+  }
+}
+
 .head__title {
   margin: 0;
-  font-size: var(--fs-h1);
-  font-weight: 400;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
   line-height: 1.2;
 }
 
 .head__badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: inline-flex;
 }
 
-.head__meta {
+.head__age {
+  font-size: var(--fs-body);
+  color: var(--t3);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The design's small caps label ("MIJOZ", "TO'LOV TURI"). */
+.lbl {
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+
+/* To'lov turi: two radio cards, the chosen one soft accent with a filled ring. */
+.plan {
+  gap: 10px;
+  padding: 18px;
+}
+
+.plan__options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1.5px solid var(--e8);
+  border-radius: 14px;
+  background: var(--w);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-section);
+  text-align: left;
+}
+
+button.opt {
+  cursor: pointer;
+}
+
+button.opt:hover:not(:disabled) {
+  border-color: var(--d9);
+  background: var(--hov);
+}
+
+button.opt:disabled,
+.opt--off {
+  color: var(--t3);
+  cursor: not-allowed;
+}
+
+.opt--on {
+  border-color: var(--acc);
+  background: var(--acc-bg);
+}
+
+.opt__dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--b5);
+  border-radius: 50%;
+}
+
+.opt--on .opt__dot {
+  border: 6px solid var(--acc);
+}
+
+.plan__reason {
   margin: 0;
-  font-size: var(--fs-small);
-  color: var(--t2);
-  overflow-wrap: anywhere;
+  font-size: var(--fs-meta);
+  color: var(--t3);
 }
 
 /* v8 closed-order banner: a grey card with a red cross. */
@@ -800,37 +914,22 @@ const confirmPlan = (): void => {
   gap: 16px;
 }
 
-@media (min-width: 1100px) {
+@media (min-width: 1024px) {
   .layout {
-    grid-template-columns: minmax(0, 1fr) 360px;
-    grid-template-rows: auto 1fr;
-    grid-template-areas:
-      'main actions'
-      'main side';
+    grid-template-columns: minmax(0, 1fr) 340px;
+    column-gap: 20px;
     row-gap: 16px;
-  }
-
-  .panel--actions {
-    grid-area: actions;
-  }
-
-  .main {
-    grid-area: main;
-  }
-
-  .side {
-    grid-area: side;
   }
 }
 
-/* v8 card: white, hairline ring, 12px radius, 20px padding. */
+/* The design's card: white, hairline border, 14px radius. */
 .panel {
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
   padding: 20px;
-  border-radius: var(--r-card);
+  border-radius: 14px;
   background: var(--w);
   box-shadow: inset 0 0 0 1px var(--e8);
 }

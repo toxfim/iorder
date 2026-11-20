@@ -97,7 +97,7 @@ export class CustomerRecommendationsService {
   /** "No price list yet" is an empty home, not a failure. */
   private async publishedListOrNull(actor: Actor): Promise<PriceListView | null> {
     try {
-      return await this.pricing.getCurrentForCustomer(actor);
+      return await this.pricing.getCatalogForCustomer(actor);
     } catch (caught) {
       if (caught instanceof NotFoundError) return null;
       throw caught;

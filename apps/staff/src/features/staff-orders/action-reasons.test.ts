@@ -60,7 +60,7 @@ async function openOrder(
   wrappers.push(wrapper);
   await services.ordersStore.load();
   await services.directoryStore.load();
-  await waitFor(() => expect(text('.head__org')).toBe(head));
+  await waitFor(() => expect(text('.client__name')).toBe(head));
   await flushPromises();
   return { services, orders };
 }
@@ -77,6 +77,11 @@ const buttonByText = (label: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll('button')).find((b) => squash(b.textContent) === label);
 const texts = (selector: string): string[] =>
   Array.from(document.body.querySelectorAll(selector)).map((el) => squash(el.textContent));
+// The manager's «Tasdiqlash» in the page header opens the approval dialog; the locks live there.
+const openApproval = async (): Promise<void> => {
+  byTestId('approve-button').click();
+  await waitFor(() => expect(texts('.modal__title')).toContain('Buyurtmani tasdiqlaysizmi?'));
+};
 const planReady = async (): Promise<void> => {
   await waitFor(() => expect(byTestId('allocation-mode')).not.toBeNull());
 };
@@ -105,13 +110,12 @@ const PHONE = 'Samsung Galaxy A15 4/128GB';
 describe('order page: why approve is locked', () => {
   it('says to choose the sale type under the button, in the tooltip and in the dialog', async () => {
     const { services, orders } = await openOrder('IO-10491', 'Orion Mobile');
+    await openApproval();
     await planReady();
     const approveCall = vi.spyOn(orders.ordersApi, 'approve');
-    const approve = byTestId('approve-button');
+    const approve = byTestId('approve-confirm');
     expect(isLocked(approve)).toBe(true);
     expect(text('[data-testid="approve-reason"]')).toBe(NO_METHOD);
-    // The line with the reason takes the place of the hint: one line under the button, not two.
-    expect(approve.closest('.block')?.querySelectorAll('.hint')).toHaveLength(1);
     // A screen reader hears the reason with the button.
     const describedBy = approve.getAttribute('aria-describedby') ?? '';
     expect(squash(document.getElementById(describedBy)?.textContent)).toBe(NO_METHOD);
@@ -120,7 +124,7 @@ describe('order page: why approve is locked', () => {
     expect(texts('[role="tooltip"] .tip__line')).toEqual([NO_METHOD]);
 
     await tap(approve);
-    expect(text('.modal__title')).toBe("Nega tasdiqlab bo'lmaydi?");
+    expect(texts('.modal__title')).toContain("Nega tasdiqlab bo'lmaydi?");
     expect(texts('[data-testid="blocked-reasons"] li')).toEqual([NO_METHOD]);
     expect(approveCall).not.toHaveBeenCalled();
     expect(summaryByNumber(services, 'IO-10491')?.status).toBe('SUBMITTED');
@@ -130,7 +134,6 @@ describe('order page: why approve is locked', () => {
     await chooseMethod();
     expect(isLocked(approve)).toBe(false);
     expect(byTestId('approve-reason')).toBeNull();
-    expect(text('.block .hint')).toContain("buxgalteriyaga o'tadi");
     await tap(approve);
     await waitFor(() => expect(approveCall).toHaveBeenCalledTimes(1));
     await waitFor(() =>
@@ -140,23 +143,23 @@ describe('order page: why approve is locked', () => {
 
   it('puts unsaved item edits first and lists every reason in the dialog, in order', async () => {
     const { services, orders } = await openOrder('IO-10491', 'Orion Mobile');
-    await planReady();
     const approveCall = vi.spyOn(orders.ordersApi, 'approve');
     byLabel(`${PHONE}: oshirish`).click();
     await waitFor(() => expect(text('.modal__title')).toBe("Buyurtma miqdorini o'zgartirasizmi?"));
     buttonByText("Ha, o'zgartirish")?.click();
     await waitFor(() => expect(document.body.querySelector('.modal__title')).toBeNull());
 
-    expect(text('[data-testid="approve-reason"]')).toBe(UNSAVED);
+    // the header's «Tasdiqlash» does not open the dialog while edits are unsaved
     await tap(byTestId('approve-button'));
-    expect(texts('[data-testid="blocked-reasons"] li')).toEqual([UNSAVED, NO_METHOD]);
+    expect(texts('[data-testid="blocked-reasons"] li')).toEqual([UNSAVED]);
+    expect(texts('.modal__title')).not.toContain('Buyurtmani tasdiqlaysizmi?');
     await closeWhy();
 
     // Reject is locked by the unsaved edits too, with its own dialog; no reason is asked for.
     const reject = byTestId('reject-button');
     expect(isLocked(reject)).toBe(true);
     await tap(reject);
-    expect(text('.modal__title')).toBe("Nega rad etib bo'lmaydi?");
+    expect(texts('.modal__title')).toContain("Nega rad etib bo'lmaydi?");
     expect(texts('[data-testid="blocked-reasons"] li')).toEqual([UNSAVED]);
     expect(document.body.querySelector('textarea')).toBeNull();
     await closeWhy();
@@ -175,8 +178,9 @@ describe('order page: why approve is locked', () => {
           }),
       );
     });
+    await openApproval();
     await chooseMethod();
-    expect(isLocked(byTestId('approve-button'))).toBe(true);
+    expect(isLocked(byTestId('approve-confirm'))).toBe(true);
     expect(text('[data-testid="approve-reason"]')).toBe(
       'Partiyalar rejasi yuklanmoqda. Biroz kuting.',
     );
@@ -186,7 +190,7 @@ describe('order page: why approve is locked', () => {
         "Partiyalar rejasini yuklab bo'lmadi. «Qayta urinish»ni bosing.",
       ),
     );
-    expect(isLocked(byTestId('approve-button'))).toBe(true);
+    expect(isLocked(byTestId('approve-confirm'))).toBe(true);
   });
 
   it('names the product the stock is short of', async () => {
@@ -203,13 +207,14 @@ describe('order page: why approve is locked', () => {
         };
       });
     });
+    await openApproval();
     await waitFor(() => expect(byTestId('allocation-short')).not.toBeNull());
     await chooseMethod();
     const approveCall = vi.spyOn(orders.ordersApi, 'approve');
     expect(text('[data-testid="approve-reason"]')).toBe(
       `«${PHONE}» qoldig'i yetmaydi. Miqdorini kamaytiring yoki buyurtmani rad eting.`,
     );
-    await tap(byTestId('approve-button'));
+    await tap(byTestId('approve-confirm'));
     expect(texts('[data-testid="blocked-reasons"] li')).toHaveLength(1);
     expect(approveCall).not.toHaveBeenCalled();
     expect(summaryByNumber(services, 'IO-10491')?.status).toBe('SUBMITTED');
@@ -217,16 +222,17 @@ describe('order page: why approve is locked', () => {
 
   it('names the product whose supplies do not add up to the ordered quantity', async () => {
     await openOrder('IO-10491', 'Orion Mobile');
+    await openApproval();
     await planReady();
     await chooseMethod();
-    expect(isLocked(byTestId('approve-button'))).toBe(false);
+    expect(isLocked(byTestId('approve-confirm'))).toBe(false);
     byTestId('allocation-toggle').click();
     await flushPromises();
     const input = document.body.querySelector('.line__input') as HTMLInputElement;
     input.value = '0';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await flushPromises();
-    expect(isLocked(byTestId('approve-button'))).toBe(true);
+    expect(isLocked(byTestId('approve-confirm'))).toBe(true);
     expect(text('[data-testid="approve-reason"]')).toMatch(
       /^«.+»: partiyalardagi miqdor buyurtma miqdoriga teng emas\./,
     );
@@ -235,9 +241,10 @@ describe('order page: why approve is locked', () => {
   it('shows the tooltip, not a dialog, to a mouse click on a desktop', async () => {
     hoverless = false;
     const { orders } = await openOrder('IO-10491', 'Orion Mobile');
+    await openApproval();
     await planReady();
     const approveCall = vi.spyOn(orders.ordersApi, 'approve');
-    const approve = byTestId('approve-button');
+    const approve = byTestId('approve-confirm');
     approve.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'mouse', bubbles: true }));
     approve.click();
     await flushPromises();

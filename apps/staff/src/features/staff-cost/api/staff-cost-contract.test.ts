@@ -226,6 +226,7 @@ describe('stock API contract', () => {
           latestDelivery: null,
           deliveryCount: 0,
           suppliers: [],
+          brand: null,
           imageUrl: '/api/media/product-images/0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b/thumb',
           imageLargeUrl: '/api/media/product-images/0195f0a0-1c2d-7e3f-8a4b-5c6d7e8f9a0b/large',
         },

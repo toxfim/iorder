@@ -1,6 +1,9 @@
 import {
   ORGANIZATION_ROLES,
   type CustomerTimelineResponse,
+  type OrganizationLabel,
+  type PriceTier,
+  priceTierOfLabel,
   type OrderActorRole,
   type OrderStatus,
   type PaymentPlan,
@@ -14,10 +17,13 @@ import type {
   AllocationMode,
   AllocationRequestRow,
   ApproveOrderRequest,
+  CreateStaffOrderRequest,
   DeliveryContact,
   EditOrderItemsRequest,
   NotificationRecipientKind,
   NotificationType,
+  NewOrderCatalogResponse,
+  NewOrderCustomer,
   OrderDecisionWithCommentRequest,
   OrderDecisionWithReasonRequest,
   OrderEventType,
@@ -37,6 +43,7 @@ import type {
   UnitCodeRule,
 } from '@iorder/shared/staff-orders';
 import type { ActivityKind } from '@/features/activity/api/activity-api';
+import type { MemberView, OrganizationView } from '@/features/directory/domain/directory-model';
 import {
   FAKE_BACKOFFICE_MARKER,
   FAKE_CUSTOMER_COMMENTS,
@@ -320,6 +327,77 @@ const SEED_PAYMENT_METHODS: Readonly<
   'IO-10480': { chosen: 'CASH' },
   'IO-10477': { chosen: 'OFFICIAL' },
 };
+
+/**
+ * The labels of the directory's organizations (the directory fixtures have none; only staff-orders
+ * may know a label, like the api sends it only in the FULL view). Missing ones are STANDARD.
+ */
+const SEED_LABELS: Readonly<Record<string, OrganizationLabel>> = {
+  [fakeUuid('org-orion-mobile')]: 'PARTNER',
+  [fakeUuid('org-person-1')]: 'PARTNER',
+  [fakeUuid('org-person-2')]: 'ALIF_FACTORING',
+  [fakeUuid('org-texno-market')]: 'ALIF_FACTORING',
+  [fakeUuid('org-gsm-plus')]: 'WHOLESALE',
+};
+const labelOf = (organizationId: string): OrganizationLabel =>
+  SEED_LABELS[organizationId] ?? 'STANDARD';
+
+// The manager's new order (fake data only). Free sheet stock per FAKE_ORDER_PRODUCTS number (the
+// rest have 50; the fake keeps no holds here): 16 has none on the sheet and is not
+// offered. 12 is a staff-added "by order" product (no stock tracking). The Alif tier has no price
+// for 14 and 15, so they are not offered to it.
+const NEW_ORDER_STOCK: Readonly<Record<number, number>> = {
+  1: 28,
+  2: 7,
+  3: 40,
+  4: 132,
+  5: 63,
+  6: 22,
+  7: 11,
+  16: 0,
+};
+const BY_ORDER_PRODUCT_NO = 12;
+const NO_ALIF_PRICE_PRODUCT_NOS: readonly number[] = [14, 15];
+
+/** The fake tiers: wholesale/partner 6% below the standard price, Alif factoring 4% above. */
+function tierPrice(standard: string, tier: PriceTier): string {
+  const percent = tier === 'WHOLESALE_PARTNER' ? 94n : tier === 'ALIF_FACTORING' ? 104n : 100n;
+  return fromCents((toCents(standard) * percent + 50n) / 100n);
+}
+
+const KNOWN_BRANDS = ['Samsung', 'Xiaomi', 'Apple', 'Anker', 'Baseus', 'JBL', 'TCL'];
+const brandOf = (name: string): string | null =>
+  KNOWN_BRANDS.find((brand) => name.toLowerCase().includes(brand.toLowerCase())) ?? null;
+
+/** Two individuals (PERSON organizations) the directory fixtures do not have. */
+const FAKE_PERSON_CUSTOMERS: readonly { organization: OrganizationView; member: MemberView }[] = [
+  ['Madina Ergasheva', '+998938223344'],
+  ['Jahongir Nurmatov', '+998978334455'],
+].map(([name = '', phone = ''], index) => {
+  const id = fakeUuid(`org-person-${index + 1}`);
+  return {
+    organization: {
+      id,
+      name,
+      type: 'PERSON',
+      address: '',
+      phone,
+      telegramGroup: '',
+      isActive: true,
+      since: '2026-09-01T08:00:00.000Z',
+    },
+    member: {
+      id: fakeUuid(`u-person-${index + 1}`),
+      organizationId: id,
+      name,
+      phone,
+      telegramUsername: '',
+      role: 'SHOP_OWNER',
+      isActive: true,
+      joinedAt: '2026-09-01T08:00:00.000Z',
+    },
+  };
+});
 
 /** Who reads the unit codes (VIEW_UNIT_CODES): not the driver. */
 const CODE_VIEW_ROLES: readonly StaffRole[] = [
@@ -743,6 +821,7 @@ export function createFakeStaffOrders(options: FakeStaffOrdersOptions = {}): Fak
       orderNumber: order.orderNumber,
       organizationId: order.organizationId,
       organizationName: orgBySource.get(order.organizationSource)?.name ?? '',
+      organizationType: orgBySource.get(order.organizationSource)?.type ?? 'GROUP',
       status: order.status,
       itemCount: order.items.length,
       submittedAt: order.submittedAt,
@@ -756,6 +835,7 @@ export function createFakeStaffOrders(options: FakeStaffOrdersOptions = {}): Fak
     return {
       ...base,
       detail: 'FULL',
+      organizationLabel: labelOf(order.organizationSource),
       paymentStatus: order.paymentStatus,
       paymentPlan: order.paymentPlan,
       totalAmount: totalOfItems(order.items),
@@ -1200,12 +1280,15 @@ export function createFakeStaffOrders(options: FakeStaffOrdersOptions = {}): Fak
     who: Viewer,
   ): OrderRecord[] {
     const full = hasAny(who, FULL_ROLES);
-    if ((query.paymentStatus || query.placedByUserId) && !full) throw new PermissionDeniedError();
+    if ((query.paymentStatus || query.paymentPlan || query.placedByUserId) && !full) {
+      throw new PermissionDeniedError();
+    }
     const needle = query.search?.toLowerCase();
     const now = clock.now();
     return [...orders.values()]
       .filter((o) => mayView(o, who))
       .filter((o) => (query.paymentStatus ? o.paymentStatus === query.paymentStatus : true))
+      .filter((o) => (query.paymentPlan ? o.paymentPlan === query.paymentPlan : true))
       .filter((o) => (query.organizationId ? o.organizationId === query.organizationId : true))
       .filter((o) => {
         if (!query.placedByUserId) return true;
@@ -1221,6 +1304,198 @@ export function createFakeStaffOrders(options: FakeStaffOrdersOptions = {}): Fak
           text.toLowerCase().includes(needle),
         );
       });
+  }
+
+  // --- the manager's new order [C, owner 2026-11-20] ---------------------------------------------
+
+  // Two individuals (PERSON) next to the directory's groups, so step 1 shows both kinds.
+  for (const person of FAKE_PERSON_CUSTOMERS) {
+    orgBySource.set(person.organization.id, person.organization);
+    memberBySource.set(person.member.id, person.member);
+  }
+  const customerMembers = (organizationId: string) => [
+    ...FAKE_MEMBERS.filter((m) => m.organizationId === organizationId && m.isActive),
+    ...FAKE_PERSON_CUSTOMERS.filter((p) => p.organization.id === organizationId).map(
+      (p) => p.member,
+    ),
+  ];
+
+  function newOrderCustomer(organizationId: string): NewOrderCustomer | null {
+    const org = orgBySource.get(organizationId);
+    if (!org || !org.isActive) return null;
+    return {
+      organizationId: org.id,
+      name: org.name,
+      type: org.type,
+      label: labelOf(org.id),
+      members: customerMembers(org.id).map((m) => ({
+        userId: m.id,
+        fullName: m.name,
+        phone: m.phone,
+      })),
+    };
+  }
+
+  /** The catalog of a tier, as the api builds it (sheet products with zero sheet stock left out). */
+  function catalogOf(organizationId: string): NewOrderCatalogResponse['items'] {
+    const tier = priceTierOfLabel(labelOf(organizationId));
+    return Object.entries(FAKE_ORDER_PRODUCTS).flatMap(([no, [name, price]]) => {
+      const number = Number(no);
+      const seed = FAKE_PRODUCT_SEEDS.find((p) => p.names.UZ === name);
+      const productCode = seed?.productCode ?? String(number);
+      const tracked = options.stockTracked?.(productCode) ?? number !== BY_ORDER_PRODUCT_NO;
+      const sheetStock = tracked ? (NEW_ORDER_STOCK[number] ?? 50) : null;
+      if (sheetStock === 0) return [];
+      // Alif factoring: a product without an Alif price is not offered at all.
+      if (tier === 'ALIF_FACTORING' && NO_ALIF_PRICE_PRODUCT_NOS.includes(number)) return [];
+      const unitPrice = tierPrice(price, tier);
+      return [
+        {
+          productId: fakeUuid(`product:${productCode}`),
+          productCode,
+          name,
+          category: seed?.category ?? null,
+          brand: brandOf(name),
+          imageUrl: null,
+          imageLargeUrl: null,
+          unitPrice,
+          deferredUnitPrice:
+            number === NO_DEFERRED_PRODUCT_NO ? null : fromCents((toCents(unitPrice) * 11n) / 10n),
+          stock: sheetStock,
+        },
+      ];
+    });
+  }
+
+  const createdByKey = new Map<string, { orderId: string; by: string }>();
+  /** The next number after the highest one, like the server's sequence. */
+  const nextOrderNumber = (): string =>
+    `IO-${Math.max(0, ...[...orders.values()].map((o) => Number(o.orderNumber.replace(/\D/g, '')))) + 1}`;
+
+  function createOrderFor(request: CreateStaffOrderRequest, key: string): StaffOrder {
+    const who = gate(['MANAGER']);
+    const me = actorOf(who);
+    const earlier = createdByKey.get(`${request.organizationId}:${key}`);
+    if (earlier) {
+      if (earlier.by !== who.name) {
+        throw new ApiConflictError(
+          'This idempotency key was already used by another person',
+          'CONFLICT',
+          undefined,
+          'IDEMPOTENCY_KEY_REUSED',
+        );
+      }
+      return orderView(requireVisible(earlier.orderId, who), who);
+    }
+    const customer = newOrderCustomer(request.organizationId);
+    if (!customer) {
+      throw new ApiConflictError(
+        'This organization cannot place orders',
+        'CONFLICT',
+        undefined,
+        'ORDERING_ORGANIZATION_INACTIVE',
+      );
+    }
+    if (!customer.members.some((m) => m.userId === request.placedByUserId)) {
+      throw new ApiConflictError(
+        'The person is not a current member of this organization',
+        'CONFLICT',
+        undefined,
+        'PLACER_NOT_MEMBER',
+      );
+    }
+    const catalog = new Map(catalogOf(request.organizationId).map((i) => [i.productId, i]));
+    const missing = request.lines.filter((l) => !catalog.has(l.productId)).map((l) => l.productId);
+    if (missing.length > 0) {
+      throw new ApiConflictError(
+        'Some products cannot be ordered right now',
+        'CONFLICT',
+        { productIds: missing },
+        'PRODUCT_NOT_ORDERABLE',
+      );
+    }
+    const noDeferred = request.lines
+      .filter((l) => catalog.get(l.productId)?.deferredUnitPrice === null)
+      .map((l) => l.productId);
+    if (request.paymentPlan === 'DEFERRED' && noDeferred.length > 0) {
+      throw new ApiConflictError(
+        'Some products have no deferred price',
+        'CONFLICT',
+        { productIds: noDeferred },
+        'DEFERRED_PRICE_UNAVAILABLE',
+      );
+    }
+    const items: Item[] = request.lines.map((line) => {
+      const entry = catalog.get(line.productId);
+      if (!entry) throw new Error('checked above');
+      const quantity = String(Number(line.quantity));
+      return {
+        id: nextId('item'),
+        productId: entry.productId,
+        productCode: entry.productCode,
+        name: entry.name,
+        unit: 'dona',
+        quantity,
+        unitPrice:
+          request.paymentPlan === 'FULL'
+            ? entry.unitPrice
+            : (entry.deferredUnitPrice ?? entry.unitPrice),
+        fullUnitPrice: entry.unitPrice,
+        deferredUnitPrice: entry.deferredUnitPrice,
+        stockTracked: entry.stock !== null,
+      };
+    });
+    const total = totalOfItems(items);
+    if (toCents(total) !== toCents(request.expectedTotalAmount)) {
+      throw new ApiConflictError(
+        'The total changed after the cart was read',
+        'CONFLICT',
+        { currentTotalAmount: total },
+        'CART_TOTAL_CHANGED',
+      );
+    }
+    const now = clock.now().getTime();
+    const at = new Date(now).toISOString();
+    const comment = request.comment?.trim() ? request.comment.trim() : null;
+    const order: OrderRecord = {
+      id: nextId('order'),
+      orderNumber: nextOrderNumber(),
+      organizationId: request.organizationId,
+      organizationSource: request.organizationId,
+      placedBySource: request.placedByUserId,
+      status: 'SUBMITTED',
+      paymentStatus: 'UNPAID',
+      paymentMethod: null,
+      paymentPlan: request.paymentPlan,
+      usdRate: FAKE_ORDER_USD_RATE,
+      rowVersion: 1,
+      submittedAt: at,
+      updatedAt: at,
+      customerComment: comment,
+      managerApprovedAt: null,
+      goodsReturnedAt: null,
+      goodsReturnedBy: null,
+      accountingMode: 'PENDING',
+      clearedAt: null,
+      reviewedAt: null,
+      reviewedByUserId: null,
+      driverId: null,
+      items,
+      events: [],
+    };
+    // Who did it: the manager, on behalf of the member (the api's event says the same).
+    addEvent(order, now, {
+      type: 'SUBMITTED',
+      actorRole: 'MANAGER',
+      toStatus: 'SUBMITTED',
+      actorUserId: me.userId,
+      actorName: me.name,
+      notify: ['MANAGERS'],
+      notificationType: 'ORDER_SUBMITTED',
+    });
+    orders.set(order.id, order);
+    createdByKey.set(`${request.organizationId}:${key}`, { orderId: order.id, by: who.name });
+    return orderView(order, who);
   }
 
   const ordersApi: StaffOrdersApi = {
@@ -1284,6 +1559,67 @@ export function createFakeStaffOrders(options: FakeStaffOrdersOptions = {}): Fak
         orders: page.map((o) => summaryOf(o, who)),
         nextCursor: hasMore && last ? last.id : null,
       };
+    },
+
+    async listNewOrderCustomers(query = {}) {
+      const state = await beforeRead();
+      gate(['MANAGER']);
+      if (state === 'empty') return { items: [], recent: [] };
+      const needle = query.search?.toLowerCase();
+      const digits = query.search?.replace(/[\s()+-]/g, '') ?? '';
+      const all = [...orgBySource.keys()].flatMap((id) => {
+        const customer = newOrderCustomer(id);
+        return customer ? [customer] : [];
+      });
+      const items = all
+        .filter((c) => (query.type ? c.type === query.type : true))
+        .filter((c) => (query.label ? c.label === query.label : true))
+        .filter((c) => {
+          if (!needle) return true;
+          return (
+            c.name.toLowerCase().includes(needle) ||
+            c.members.some(
+              (m) =>
+                m.fullName.toLowerCase().includes(needle) ||
+                (/^\d{3,}$/.test(digits) && (m.phone ?? '').includes(digits)),
+            )
+          );
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      // The organizations of the latest orders, newest first [P].
+      const recentIds = [...orders.values()]
+        .sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt))
+        .map((o) => o.organizationId);
+      const recent = [...new Set(recentIds)]
+        .flatMap((id) => {
+          const customer = newOrderCustomer(id);
+          return customer && customer.members.length > 0 ? [customer] : [];
+        })
+        .slice(0, 4);
+      return { items, recent };
+    },
+    async getNewOrderCatalog(organizationId) {
+      const state = await beforeRead();
+      gate(['MANAGER']);
+      if (!newOrderCustomer(organizationId)) {
+        throw new ApiConflictError(
+          'This organization cannot place orders',
+          'CONFLICT',
+          undefined,
+          'ORDERING_ORGANIZATION_INACTIVE',
+        );
+      }
+      const tier = priceTierOfLabel(labelOf(organizationId));
+      return {
+        organizationId,
+        priceTier: tier,
+        currency: 'UZS' as const,
+        items: state === 'empty' ? [] : catalogOf(organizationId),
+      };
+    },
+    async createOrder(request, idempotencyKey) {
+      await delay();
+      return createOrderFor(request, idempotencyKey);
     },
 
     async getOrder(orderId) {

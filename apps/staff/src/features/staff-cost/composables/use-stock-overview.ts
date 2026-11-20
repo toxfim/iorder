@@ -1,19 +1,21 @@
-import { shallowRef, watch, type Ref } from 'vue';
+import { shallowRef } from 'vue';
 import type { StockOverviewResponse } from '@iorder/shared/staff-cost';
 import { PermissionDeniedError } from '@core/lib/api-errors';
 import type { ViewState } from '@core/composables/use-async-view';
 import type { StockApi } from '../api/stock-api';
 
 /**
- * The stock list. "In stock only" is a server filter (`inStock=true`); search and category are
- * applied on the client over the answer, so typing never makes a request.
+ * The whole stock list. Every filter of the page (ready views, search, category, brand,
+ * supplier) runs on the client over this answer, so choosing one never makes a request.
  */
-export function useStockOverview(api: StockApi, inStockOnly: Ref<boolean>) {
+export function useStockOverview(api: StockApi) {
   const state = shallowRef<ViewState>('loading');
   const error = shallowRef<unknown>(null);
   const response = shallowRef<StockOverviewResponse | null>(null);
   /** A silent reload is running: the old rows stay on screen until the answer arrives. */
   const refreshing = shallowRef(false);
+  /** When the answer arrived: "Yangi postavka" counts days back from it. */
+  const loadedAt = shallowRef(Date.now());
   let run = 0;
 
   async function reload(options: { silent?: boolean } = {}): Promise<void> {
@@ -22,10 +24,11 @@ export function useStockOverview(api: StockApi, inStockOnly: Ref<boolean>) {
     else refreshing.value = true;
     error.value = null;
     try {
-      const next = await api.listStock(inStockOnly.value ? { inStock: true } : {});
+      const next = await api.listStock();
       if (mine !== run) return;
       response.value = next;
-      state.value = next.items.length === 0 && !inStockOnly.value ? 'empty' : 'ready';
+      loadedAt.value = Date.now();
+      state.value = next.items.length === 0 ? 'empty' : 'ready';
     } catch (caught) {
       if (mine !== run) return;
       error.value = caught;
@@ -35,9 +38,6 @@ export function useStockOverview(api: StockApi, inStockOnly: Ref<boolean>) {
     }
   }
 
-  // Toggling the filter keeps the table mounted: swapping it for the skeleton made the whole list
-  // blink on every click.
-  watch(inStockOnly, () => void reload({ silent: true }));
   void reload();
-  return { state, error, response, refreshing, reload };
+  return { state, error, response, refreshing, loadedAt, reload };
 }
